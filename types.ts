@@ -79,7 +79,15 @@ export interface SupportTicket {
   adminReplies: string[];
 }
 
-// INSTRUCTIONS: Paste your Stripe Payment Links inside the quotes below
+// INSTRUCTIONS FOR STRIPE CONFIGURATION:
+// 1. Create Payment Links in your Stripe Dashboard for each plan below.
+// 2. Paste the generated URL (starting with 'https://buy.stripe.com/...') into the 'paymentLink' fields below.
+// 3. CRITICAL: In the Stripe Dashboard, for EACH payment link:
+//    - Go to "After payment" settings.
+//    - Select "Redirect customers to your website".
+//    - Enter this URL: https://www.upscaleimageryai.com/#/payment-success
+//    - This ensures users are returned to the app to unlock their credits/features.
+
 export const PLANS: PricingPlan[] = [
   {
     id: PlanTier.NONE,

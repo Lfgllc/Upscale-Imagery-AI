@@ -78,6 +78,9 @@ app.post('/api/create-payment-intent', async (req, res) => {
 app.post('/api/create-checkout-session', async (req, res) => {
   const { priceId, email } = req.body;
 
+  // Use the production domain as fallback if origin header is missing
+  const DOMAIN = req.headers.origin || 'https://www.upscaleimageryai.com';
+
   try {
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
@@ -89,9 +92,9 @@ app.post('/api/create-checkout-session', async (req, res) => {
         },
       ],
       customer_email: email,
-      // If deployed, use the host URL, otherwise localhost
-      success_url: `${req.headers.origin || 'http://localhost:3000'}/#/dashboard?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${req.headers.origin || 'http://localhost:3000'}/#/dashboard`,
+      // Redirects to the dashboard on success/cancel
+      success_url: `${DOMAIN}/#/dashboard?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${DOMAIN}/#/dashboard`,
     });
 
     res.json({ url: session.url });

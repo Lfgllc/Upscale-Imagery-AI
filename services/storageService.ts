@@ -11,7 +11,8 @@ const PENDING_TXN_KEY = 'upscale_pending_transaction';
 
 // CONFIG: Set this to true when backend server (server.js) is running
 const USE_REAL_BACKEND = false; 
-const BACKEND_URL = 'http://localhost:3001/api';
+// Updated to production URL
+const BACKEND_URL = 'https://www.upscaleimageryai.com/api';
 
 // Initial Mock User
 const INITIAL_USER: User = {
