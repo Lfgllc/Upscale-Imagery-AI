@@ -5,7 +5,8 @@ import { PLANS, PlanTier } from '../types';
 export const LandingPage: React.FC = () => {
   const navigate = useNavigate();
   const [imgErrors, setImgErrors] = useState({
-    beforeAfter: false
+    beforeAfter: false,
+    creator: false
   });
 
   return (
@@ -95,12 +96,13 @@ export const LandingPage: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <h2 className="text-3xl font-extrabold text-navy-900 mb-8">See the Transformation</h2>
           
+          {/* UPDATED: max-w-lg restricts width, aspect-square enforces 1:1 ratio */}
           <div className="relative rounded-xl overflow-hidden shadow-2xl border-4 border-white max-w-lg mx-auto bg-slate-200 aspect-square">
             {!imgErrors.beforeAfter ? (
                 <img 
                   src="/before-after.jpg" 
                   alt="Before and After Transformation" 
-                  className="w-full h-full object-cover" 
+                  className="w-full h-full object-cover" // object-cover ensures it fills the square without distortion
                   onError={() => setImgErrors(prev => ({...prev, beforeAfter: true}))}
                 />
             ) : (
@@ -124,6 +126,27 @@ export const LandingPage: React.FC = () => {
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col items-center">
             
+            {/* Image Container */}
+            <div className="relative mb-10 group">
+              {/* Backglow adjusted for square shape */}
+              <div className="absolute -inset-4 bg-camel-200 rounded-2xl blur-2xl opacity-40 group-hover:opacity-60 transition-opacity duration-500"></div>
+              
+              {!imgErrors.creator ? (
+                  <img 
+                    src="/creator.jpg"
+                    alt="Chasity Willis" 
+                    className="relative w-72 h-72 sm:w-96 sm:h-96 aspect-square rounded-lg object-cover shadow-2xl border-4 border-white z-10"
+                    onError={() => setImgErrors(prev => ({...prev, creator: true}))}
+                  />
+              ) : (
+                   <div className="relative w-72 h-72 sm:w-96 sm:h-96 aspect-square rounded-lg bg-navy-900 border-4 border-white z-10 flex flex-col items-center justify-center text-center p-6 shadow-2xl">
+                        <div className="w-20 h-20 bg-camel-500 rounded-full flex items-center justify-center text-3xl font-bold text-white mb-4">CW</div>
+                        <p className="text-white font-bold">Chasity Willis</p>
+                        <p className="text-camel-200 text-xs mt-2">Creator</p>
+                   </div>
+              )}
+            </div>
+
             {/* Message Card */}
             <div className="relative bg-tan-100/30 rounded-2xl p-8 md:p-12 shadow-sm border border-tan-200 text-center">
               <div className="absolute top-0 left-0 -mt-6 -ml-4 text-6xl text-camel-300 opacity-50 font-serif">"</div>
