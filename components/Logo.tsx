@@ -1,34 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 
 interface LogoProps {
   className?: string;
 }
 
 export const Logo: React.FC<LogoProps> = ({ className = "h-10 w-auto" }) => {
-  // State to manage which file extension we are trying
-  const [currentSrc, setCurrentSrc] = useState<string>("/logo.png?v=" + Date.now());
-  const [attempt, setAttempt] = useState(0);
   const [hasError, setHasError] = useState(false);
 
-  // Robust error handling: Try png -> jpg -> jpeg -> SVG Fallback
-  const handleError = () => {
-    if (attempt === 0) {
-      // Try JPG
-      setCurrentSrc("/logo.jpg?v=" + Date.now());
-      setAttempt(1);
-    } else if (attempt === 1) {
-      // Try JPEG
-      setCurrentSrc("/logo.jpeg?v=" + Date.now());
-      setAttempt(2);
-    } else {
-      // Give up and show SVG
-      setHasError(true);
-    }
-  };
-
-  if (hasError) {
-    // Professional SVG Fallback (Monogram)
-    return (
+  // SVG Fallback (Monogram)
+  const fallback = (
       <svg 
         viewBox="0 0 100 100" 
         className={className} 
@@ -41,15 +21,18 @@ export const Logo: React.FC<LogoProps> = ({ className = "h-10 w-auto" }) => {
         <path d="M65 30V60" stroke="#c19a6b" strokeWidth="8" strokeLinecap="round"/>
         <circle cx="65" cy="25" r="5" fill="#c19a6b"/>
       </svg>
-    );
+  );
+
+  if (hasError) {
+    return fallback;
   }
 
   return (
     <img 
-      src={currentSrc} 
+      src="/logo.png" 
       alt="Upscale Imagery AI" 
       className={`object-contain ${className}`}
-      onError={handleError} 
+      onError={() => setHasError(true)} 
     />
   );
 };
