@@ -4,6 +4,7 @@ import Stripe from 'stripe';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
+import sharp from 'sharp';
 
 // CRITICAL: Import with .js extension for ESM compatibility in Vercel environment
 import supabaseAdmin from './supabaseClient.js';
@@ -74,10 +75,32 @@ app.post('/api/generate', async (req, res) => {
         }
     }
 
-    // 3. SANITIZE DATA
-    // The client now ensures this is an optimized JPEG, so we strictly handle it as such.
-    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-    const cleanBase64 = base64Data.replace(/[\s\r\n]+/g, "");
+    // 3. IMAGE PROCESSING & SANITIZATION
+    // We use 'sharp' to safely resize and compress the image on the server.
+    // This prevents "unexpected format" errors from Gemini and handles memory efficiently.
+    let optimizedBase64 = "";
+    try {
+        // Strip data URI prefix if present
+        const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+        const inputBuffer = Buffer.from(base64Data, 'base64');
+
+        // Resize to max 1024x1024 (fit: inside) and convert to JPEG (quality: 80)
+        const processedBuffer = await sharp(inputBuffer)
+            .resize(1024, 1024, { 
+                fit: 'inside', 
+                withoutEnlargement: true // Don't upscale small images
+            })
+            .jpeg({ 
+                quality: 80, 
+                mozjpeg: true // Better compression
+            })
+            .toBuffer();
+        
+        optimizedBase64 = processedBuffer.toString('base64');
+    } catch (imgError) {
+        console.error("Image Processing Failed:", imgError);
+        return res.status(400).json({ error: "Invalid image format. Please upload a valid PNG or JPEG image." });
+    }
 
     // 4. EXECUTE GEMINI GENERATION
     const ai = new GoogleGenAI({ apiKey: API_KEY });
@@ -94,8 +117,8 @@ app.post('/api/generate', async (req, res) => {
                 },
                 {
                     inlineData: {
-                        data: cleanBase64,
-                        mimeType: "image/jpeg", // Client now guarantees JPEG 0.8 optimization
+                        data: optimizedBase64,
+                        mimeType: "image/jpeg",
                     }
                 }
             ]
@@ -129,14 +152,20 @@ app.post('/api/generate', async (req, res) => {
     console.log("AI Generation Successful");
 
     // 6. RETURN RESPONSE
-    const returnedImage = `data:image/jpeg;base64,${cleanBase64}`;
+    // Return the optimized image so the client displays exactly what was processed
+    const returnedImage = `data:image/jpeg;base64,${optimizedBase64}`;
 
     res.json({ success: true, image: returnedImage, message: generatedText });
 
   } catch (error) {
     console.error("Generation Error:", error);
+    // User-friendly error mapping
+    let errorMessage = "Generation Failed";
+    if (error.message?.includes('413')) errorMessage = "Image is too large for the AI model.";
+    else if (error.message?.includes('503')) errorMessage = "AI Service is temporarily busy. Please try again.";
+    
     // DO NOT deduct credits here. 
-    res.status(500).json({ error: error.message || "Generation Failed" });
+    res.status(500).json({ error: errorMessage });
   }
 });
 

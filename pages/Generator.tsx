@@ -10,63 +10,71 @@ export const Generator: React.FC = () => {
   
   // State
   const [user, setUser] = useState<User>(StorageService.getUser());
-  const [selectedFile, setSelectedFile] = useState<File | null>(null); // Kept for reference, though previewUrl is primary
+  const [selectedFile, setSelectedFile] = useState<File | null>(null); // Kept for reference
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false); // New state for image compression
+  const [isProcessing, setIsProcessing] = useState(false); // Processing state for compression
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [currentImageId, setCurrentImageId] = useState<string | null>(null);
 
-  // --- IMAGE PROCESSING UTILITY ---
+  // --- CLIENT-SIDE IMAGE PROCESSING ---
   const processImage = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
+      // 1. Read the file
       const reader = new FileReader();
       reader.readAsDataURL(file);
+      
       reader.onload = (event) => {
         const img = new Image();
         img.src = event.target?.result as string;
+        
         img.onload = () => {
-          const canvas = document.createElement('canvas');
+          // 2. Calculate new dimensions (Max 1024x1024)
+          const MAX_WIDTH = 1024;
+          const MAX_HEIGHT = 1024;
           let width = img.width;
           let height = img.height;
-          
-          // Resize to max 1024x1024 (Maintains Aspect Ratio)
-          const MAX_SIZE = 1024;
+
           if (width > height) {
-            if (width > MAX_SIZE) {
-              height *= MAX_SIZE / width;
-              width = MAX_SIZE;
+            if (width > MAX_WIDTH) {
+              height *= MAX_WIDTH / width;
+              width = MAX_WIDTH;
             }
           } else {
-            if (height > MAX_SIZE) {
-              width *= MAX_SIZE / height;
-              height = MAX_SIZE;
+            if (height > MAX_HEIGHT) {
+              width *= MAX_HEIGHT / height;
+              height = MAX_HEIGHT;
             }
           }
 
+          // 3. Create Canvas and Draw
+          const canvas = document.createElement('canvas');
           canvas.width = width;
           canvas.height = height;
           const ctx = canvas.getContext('2d');
+          
           if (!ctx) {
             reject(new Error("Browser does not support image processing."));
             return;
           }
           
-          // Draw with white background (handles transparent PNGs converting to JPEG)
+          // Fill white background to handle transparency (PNG -> JPEG conversion)
           ctx.fillStyle = "#FFFFFF";
           ctx.fillRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
           
-          // Compress to JPEG at 0.8 quality
-          // This typically reduces a 5MB photo to <300KB
+          // 4. Export compressed JPEG (0.8 quality)
+          // This dramatically reduces file size while keeping visual quality high for AI
           const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
           resolve(dataUrl);
         };
-        img.onerror = () => reject(new Error("Failed to load image."));
+        
+        img.onerror = () => reject(new Error("Failed to load image structure."));
       };
+      
       reader.onerror = () => reject(new Error("Failed to read file."));
     });
   };
@@ -74,19 +82,25 @@ export const Generator: React.FC = () => {
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      // Clear previous states
+      // Reset State
       setError(null);
       setPreviewUrl(null);
       setSelectedFile(file);
       setIsProcessing(true);
 
       try {
-        // Automatically resize and compress the image
+        // Run Client-Side Resizing
+        console.log(`Original file size: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
         const optimizedBase64 = await processImage(file);
+        
+        // Debug: Log approximate new size
+        const approximateSize = (optimizedBase64.length * 3) / 4 / 1024 / 1024;
+        console.log(`Optimized size: ${approximateSize.toFixed(2)} MB`);
+        
         setPreviewUrl(optimizedBase64);
       } catch (err: any) {
-        console.error(err);
-        setError("Failed to process image. Please try a different file.");
+        console.error("Image processing error:", err);
+        setError("Failed to process image. Please try a valid JPEG or PNG file.");
       } finally {
         setIsProcessing(false);
       }
@@ -114,8 +128,7 @@ export const Generator: React.FC = () => {
     setError(null);
 
     try {
-      // 1. CALL SERVER
-      // previewUrl is now guaranteed to be a compressed JPEG base64 string
+      // 1. CALL SERVER with Optimized Image
       const resultBase64 = await GeminiService.transformImage(previewUrl, prompt);
       
       setGeneratedImage(resultBase64);
