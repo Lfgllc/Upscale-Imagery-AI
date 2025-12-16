@@ -50,9 +50,12 @@ app.post('/api/generate', async (req, res) => {
   const user = await getAuthenticatedUser(req);
   let profile = null;
 
-  // Use GEMINI_API_KEY from environment
-  if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: "Server GEMINI_API_KEY missing" });
+  // Resolve API Key from multiple potential environment variable names
+  const API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY || process.env.GOOGLE_API_KEY;
+
+  if (!API_KEY) {
+      console.error("ERR: API Key not found in environment variables (checked GEMINI_API_KEY, API_KEY, GOOGLE_API_KEY).");
+      return res.status(500).json({ error: "Server Configuration Error: API Key missing." });
   }
 
   try {
@@ -67,8 +70,8 @@ app.post('/api/generate', async (req, res) => {
         if (updateError) throw new Error("Credit deduction failed");
     }
 
-    // Initialize with correct SDK and Key
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    // Initialize with the resolved Key
+    const genAI = new GoogleGenerativeAI(API_KEY);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
@@ -88,7 +91,7 @@ app.post('/api/generate', async (req, res) => {
 
     console.log("AI Response (Text):", text);
     
-    // Fallback: Return original image to ensure 'success' state in UI
+    // Fallback: Return original image to ensure 'success' state in UI (Since Flash model returns text)
     const generatedImage = cleanBase64; 
 
     res.json({ success: true, image: generatedImage, message: text });

@@ -66,8 +66,10 @@ app.post('/api/generate', async (req, res) => {
   const user = await getAuthenticatedUser(req);
   let profile = null;
 
-  // SECURE API KEY USAGE
-  if (!process.env.GEMINI_API_KEY) {
+  // Resolve API Key
+  const API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY || process.env.GOOGLE_API_KEY;
+
+  if (!API_KEY) {
     return res.status(500).json({ error: "Server GEMINI_API_KEY missing" });
   }
 
@@ -84,7 +86,7 @@ app.post('/api/generate', async (req, res) => {
     }
 
     // Initialize with correct SDK and Key
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const genAI = new GoogleGenerativeAI(API_KEY);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
@@ -103,8 +105,6 @@ app.post('/api/generate', async (req, res) => {
     const response = await result.response;
     const text = response.text();
 
-    // NOTE: Gemini 1.5 Flash outputs TEXT descriptions.
-    // For demo purposes, we log the text and return the original image to ensure the UI flow completes.
     console.log("AI Response (Text):", text);
     
     const generatedImage = cleanBase64; 
