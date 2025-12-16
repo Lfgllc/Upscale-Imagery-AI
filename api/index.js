@@ -17,7 +17,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2023-10-16',
 });
 
-// Middleware: High limit for image uploads
+// Middleware: High limit for image uploads (though Vercel strictly enforces 4.5MB)
 app.use(express.json({ limit: '10mb' }));
 app.use(cors());
 
@@ -75,7 +75,7 @@ app.post('/api/generate', async (req, res) => {
     }
 
     // 3. SANITIZE DATA
-    // Remove Data URI prefix and aggressively clean whitespace/newlines
+    // The client now ensures this is an optimized JPEG, so we strictly handle it as such.
     const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
     const cleanBase64 = base64Data.replace(/[\s\r\n]+/g, "");
 
@@ -95,7 +95,7 @@ app.post('/api/generate', async (req, res) => {
                 {
                     inlineData: {
                         data: cleanBase64,
-                        mimeType: "image/jpeg",
+                        mimeType: "image/jpeg", // Client now guarantees JPEG 0.8 optimization
                     }
                 }
             ]
@@ -129,9 +129,6 @@ app.post('/api/generate', async (req, res) => {
     console.log("AI Generation Successful");
 
     // 6. RETURN RESPONSE
-    // For this specific logic flow, we are returning the original image (as per previous logic) 
-    // or you would integrate 'imagen' if doing actual pixel generation. 
-    // Assuming text-based description or placeholder for this specific snippet.
     const returnedImage = `data:image/jpeg;base64,${cleanBase64}`;
 
     res.json({ success: true, image: returnedImage, message: generatedText });

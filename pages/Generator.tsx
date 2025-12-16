@@ -10,32 +10,86 @@ export const Generator: React.FC = () => {
   
   // State
   const [user, setUser] = useState<User>(StorageService.getUser());
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null); // Kept for reference, though previewUrl is primary
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false); // New state for image compression
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [currentImageId, setCurrentImageId] = useState<string | null>(null);
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  // --- IMAGE PROCESSING UTILITY ---
+  const processImage = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          
+          // Resize to max 1024x1024 (Maintains Aspect Ratio)
+          const MAX_SIZE = 1024;
+          if (width > height) {
+            if (width > MAX_SIZE) {
+              height *= MAX_SIZE / width;
+              width = MAX_SIZE;
+            }
+          } else {
+            if (height > MAX_SIZE) {
+              width *= MAX_SIZE / height;
+              height = MAX_SIZE;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error("Browser does not support image processing."));
+            return;
+          }
+          
+          // Draw with white background (handles transparent PNGs converting to JPEG)
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          // Compress to JPEG at 0.8 quality
+          // This typically reduces a 5MB photo to <300KB
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          resolve(dataUrl);
+        };
+        img.onerror = () => reject(new Error("Failed to load image."));
+      };
+      reader.onerror = () => reject(new Error("Failed to read file."));
+    });
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      // SAFARI/VERCEL FIX: Reduced to 3MB. 
-      // Base64 encoding adds ~33% overhead. 4MB file -> ~5.3MB payload.
-      // Vercel Serverless limit is 4.5MB. Exceeding this returns HTML 413, causing JSON parse error in Safari.
-      if (file.size > 3 * 1024 * 1024) {
-        setError("File size must be under 3MB to ensure processing.");
-        return;
-      }
-      setSelectedFile(file);
+      // Clear previous states
       setError(null);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPreviewUrl(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      setPreviewUrl(null);
+      setSelectedFile(file);
+      setIsProcessing(true);
+
+      try {
+        // Automatically resize and compress the image
+        const optimizedBase64 = await processImage(file);
+        setPreviewUrl(optimizedBase64);
+      } catch (err: any) {
+        console.error(err);
+        setError("Failed to process image. Please try a different file.");
+      } finally {
+        setIsProcessing(false);
+      }
     }
   };
 
@@ -46,15 +100,11 @@ export const Generator: React.FC = () => {
     }
 
     // --- CHECK: Free vs Paid ---
-    // Guests: Always Free Preview
-    // Users: Check credits
     let isFreePreview = false;
 
     if (!user.isAuthenticated) {
         isFreePreview = true;
     } else if (user.credits <= 0 && user.plan === PlanTier.NONE) {
-        // User is logged in but has no credits.
-        // We prompt them to pay.
         setError("You have 0 credits. Please purchase a pack to generate.");
         setShowPaymentModal(true);
         return;
@@ -65,6 +115,7 @@ export const Generator: React.FC = () => {
 
     try {
       // 1. CALL SERVER
+      // previewUrl is now guaranteed to be a compressed JPEG base64 string
       const resultBase64 = await GeminiService.transformImage(previewUrl, prompt);
       
       setGeneratedImage(resultBase64);
@@ -77,7 +128,6 @@ export const Generator: React.FC = () => {
       }
 
       // 3. SAVE IMAGE RECORD
-      // Start with a local temp record
       const tempRecord: ImageRecord = {
         id: Date.now().toString(),
         userId: user.isAuthenticated ? user.id : 'guest',
@@ -85,8 +135,6 @@ export const Generator: React.FC = () => {
         generatedImageBase64: resultBase64,
         prompt: prompt,
         timestamp: Date.now(),
-        // If user was authenticated and had credits, server deducted them, so it's unlocked.
-        // If guest (isFreePreview), it remains locked.
         isUnlocked: !isFreePreview, 
         isFreePreview: isFreePreview
       };
@@ -95,20 +143,15 @@ export const Generator: React.FC = () => {
       setCurrentImageId(savedRecord.id);
 
       if (isFreePreview) {
-          // Record usage locally if needed, but we allow unlimited watermarked previews for now
-          // per user request "just allow them to generate"
           const u = StorageService.recordFreeUsage();
           setUser(u);
       }
 
     } catch (err: any) {
       setError(err.message || "Transformation failed. Please try a different prompt.");
-      
-      // Handle "Insufficient Credits" specifically
       if (err.message.includes("Insufficient credits")) {
           setShowPaymentModal(true);
       }
-      
       StorageService.logEvent({ type: 'GENERATION_FAILURE', timestamp: Date.now(), details: err.message });
     } finally {
       setIsGenerating(false);
@@ -135,7 +178,6 @@ export const Generator: React.FC = () => {
   };
 
   const currentRecord = getCurrentRecord();
-  // It is unlocked if the record says so, OR if we just generated it and the user had credits
   const isUnlocked = currentRecord?.isUnlocked || false;
 
   return (
@@ -160,17 +202,26 @@ export const Generator: React.FC = () => {
           <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
             <h2 className="text-lg font-medium text-navy-900 mb-4">1. Upload Source Image</h2>
             <div 
-              className={`border-2 border-dashed rounded-lg p-10 text-center cursor-pointer transition-colors ${previewUrl ? 'border-camel-500 bg-tan-100' : 'border-slate-300 hover:border-slate-400 bg-white'}`}
-              onClick={() => fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-lg p-10 text-center cursor-pointer transition-colors relative ${previewUrl ? 'border-camel-500 bg-tan-100' : 'border-slate-300 hover:border-slate-400 bg-white'}`}
+              onClick={() => !isProcessing && fileInputRef.current?.click()}
             >
               <input 
                 type="file" 
                 ref={fileInputRef} 
                 className="hidden" 
-                accept="image/jpeg, image/png" 
+                accept="image/jpeg, image/png, image/webp" 
                 onChange={handleFileChange}
               />
-              {previewUrl ? (
+              
+              {isProcessing ? (
+                <div className="py-10 flex flex-col items-center">
+                    <svg className="animate-spin h-8 w-8 text-camel-600 mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <p className="text-sm text-slate-500">Optimizing image...</p>
+                </div>
+              ) : previewUrl ? (
                 <img src={previewUrl} alt="Preview" className="max-h-64 mx-auto rounded shadow-sm" />
               ) : (
                 <div className="space-y-2">
@@ -178,7 +229,7 @@ export const Generator: React.FC = () => {
                     <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                   <p className="text-sm text-slate-600">Click to upload or drag and drop</p>
-                  <p className="text-xs text-slate-500">PNG, JPG up to 3MB</p>
+                  <p className="text-xs text-slate-500">JPG, PNG (Auto-optimized)</p>
                 </div>
               )}
             </div>
@@ -209,9 +260,9 @@ export const Generator: React.FC = () => {
 
           <button
             onClick={handleGenerate}
-            disabled={isGenerating || !previewUrl || !prompt}
+            disabled={isGenerating || isProcessing || !previewUrl || !prompt}
             className={`w-full py-4 px-6 border border-transparent rounded-md shadow-sm text-lg font-medium text-white 
-              ${isGenerating || !previewUrl || !prompt ? 'bg-slate-400 cursor-not-allowed' : 'bg-camel-600 hover:bg-camel-700'}`}
+              ${isGenerating || isProcessing || !previewUrl || !prompt ? 'bg-slate-400 cursor-not-allowed' : 'bg-camel-600 hover:bg-camel-700'}`}
           >
             {isGenerating ? (
               <span className="flex items-center justify-center">
