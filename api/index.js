@@ -74,14 +74,14 @@ app.post('/api/generate', async (req, res) => {
     }
 
     // 3. SANITIZE DATA
-    // Remove Data URI prefix and aggressively clean whitespace/newlines to prevent SDK errors
+    // Remove Data URI prefix and aggressively clean whitespace/newlines
     const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
     const cleanBase64 = base64Data.replace(/[\s\r\n]+/g, "");
 
     // 4. EXECUTE GEMINI GENERATION
     const ai = new GoogleGenAI({ apiKey: API_KEY });
     
-    // Using 'gemini-2.5-flash' for multimodal generation
+    // Using 'gemini-2.5-flash'
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: {
@@ -129,7 +129,7 @@ app.post('/api/generate', async (req, res) => {
     console.log("AI Generation Successful");
 
     // 6. RETURN RESPONSE
-    // Return original image as 'result' for now (simulating edit) + text description
+    // Return original image as 'result' + text description
     const returnedImage = `data:image/jpeg;base64,${cleanBase64}`;
 
     res.json({ success: true, image: returnedImage, message: generatedText });
@@ -151,13 +151,13 @@ app.post('/api/verify-checkout', async (req, res) => {
         if (session.payment_status !== 'paid') return res.status(400).json({ error: "Not paid" });
 
         let creditsToAdd = 0;
-        const amountTotal = session.amount_total; // Cents
+        const amountTotal = session.amount_total; 
         
         // Pricing Logic
-        if (amountTotal === 399) creditsToAdd = 5;       // One-time
-        else if (amountTotal === 999) creditsToAdd = 25; // Basic
-        else if (amountTotal === 1999) creditsToAdd = 50;// Pro
-        else if (amountTotal === 3499) creditsToAdd = 100;// Elite
+        if (amountTotal === 399) creditsToAdd = 5;       
+        else if (amountTotal === 999) creditsToAdd = 25; 
+        else if (amountTotal === 1999) creditsToAdd = 50;
+        else if (amountTotal === 3499) creditsToAdd = 100;
 
         const { data: currentProfile } = await supabaseAdmin.from('profiles').select('credits').eq('id', user.id).single();
         const currentCredits = currentProfile ? currentProfile.credits : 0;
