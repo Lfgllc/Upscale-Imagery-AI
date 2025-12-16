@@ -50,9 +50,6 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date() });
 });
 
-// Import the logic from api/index.js if needed, or re-implement for local server consistency
-// Here we re-implement the route handlers to match api/index.js for local testing
-
 app.post('/api/generate', async (req, res) => {
   const { imageBase64, prompt } = req.body;
   
@@ -76,19 +73,39 @@ app.post('/api/generate', async (req, res) => {
 
     const ai = new GoogleGenAI({ apiKey: API_KEY });
     
+    console.log("Processing Generation (gemini-2.5-flash-image)...");
+    
     const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-2.5-flash-image',
         contents: {
             parts: [
-                { text: `Act as a professional photo editor. Instruction: ${prompt}. Describe changes in vivid detail.` },
-                { inlineData: { data: base64Data, mimeType: "image/jpeg" } }
+                {
+                    inlineData: {
+                        data: base64Data,
+                        mimeType: "image/jpeg",
+                    }
+                },
+                { text: prompt }
             ]
         }
     });
 
-    if (!response || !response.text) throw new Error("Empty AI response");
+    let generatedImageBase64 = null;
+    let generatedText = "";
 
-    const generatedText = response.text;
+    if (response.candidates?.[0]?.content?.parts) {
+        for (const part of response.candidates[0].content.parts) {
+            if (part.inlineData) {
+                generatedImageBase64 = part.inlineData.data;
+            } else if (part.text) {
+                generatedText += part.text;
+            }
+        }
+    }
+
+    if (!generatedImageBase64 && !generatedText) {
+         throw new Error("Empty AI response");
+    }
 
     if (user) {
         const { data: freshProfile } = await supabaseAdmin.from('profiles').select('credits').eq('id', user.id).single();
@@ -97,8 +114,13 @@ app.post('/api/generate', async (req, res) => {
         }
     }
 
-    const returnedImage = `data:image/jpeg;base64,${base64Data}`;
-    res.json({ success: true, image: returnedImage, message: generatedText });
+    if (generatedImageBase64) {
+         const returnedImage = `data:image/jpeg;base64,${generatedImageBase64}`;
+         res.json({ success: true, image: returnedImage, message: "Transformation successful" });
+    } else {
+         const originalImg = `data:image/jpeg;base64,${base64Data}`;
+         res.json({ success: true, image: originalImg, message: generatedText || "No changes." });
+    }
 
   } catch (error) {
     console.error("Local Server Error:", error);

@@ -89,47 +89,60 @@ app.post('/api/generate', async (req, res) => {
       }
 
       // 5. EXECUTE GEMINI GENERATION
+      let generatedImageBase64 = null;
       let generatedText = "";
       
       try {
           const ai = new GoogleGenAI({ apiKey: API_KEY });
           
-          console.log("Sending request to Gemini...");
+          console.log(`Sending request to Gemini (Model: gemini-2.5-flash-image)... Payload size: ${Math.round(base64Data.length / 1024)}KB`);
+          
+          // Use the Image Editing model
+          // Note: Parts order matters for some models. Image first, then text prompt.
           const response = await ai.models.generateContent({
-              model: 'gemini-2.5-flash',
+              model: 'gemini-2.5-flash-image', 
               contents: {
                   parts: [
-                      { 
-                          text: `Act as a professional photo editor. The user wants to edit the attached image. 
-                                 Instruction: ${prompt}. 
-                                 Describe the visual changes you would make in high detail, as if you were describing the final edited image.
-                                 Ensure the output describes a complete, high-quality image.` 
-                      },
                       {
                           inlineData: {
                               data: base64Data,
                               mimeType: "image/jpeg",
                           }
+                      },
+                      { 
+                          text: prompt 
                       }
                   ]
               }
           });
 
-          if (!response || !response.text) {
-              console.error("Gemini response was empty or missing text.");
-              throw new Error("AI returned an empty response. The prompt might have triggered a safety filter.");
+          // Extract Output (Image or Text)
+          if (response.candidates?.[0]?.content?.parts) {
+              for (const part of response.candidates[0].content.parts) {
+                  if (part.inlineData) {
+                      generatedImageBase64 = part.inlineData.data;
+                  } else if (part.text) {
+                      generatedText += part.text;
+                  }
+              }
           }
 
-          generatedText = response.text;
+          if (!generatedImageBase64 && !generatedText) {
+              console.error("Empty response from Gemini:", JSON.stringify(response, null, 2));
+              throw new Error("AI returned an empty response.");
+          }
 
       } catch (geminiError) {
-          console.error("Gemini API Error:", JSON.stringify(geminiError, null, 2));
+          console.error("Gemini API Error Object:", JSON.stringify(geminiError, null, 2));
+          if (geminiError.response) {
+             console.error("Gemini Error Body:", JSON.stringify(geminiError.response, null, 2));
+          }
 
           const msg = (geminiError.message || "").toLowerCase();
           const status = geminiError.status || 500;
 
           if (status === 400 || msg.includes("invalid_argument")) {
-               return res.status(400).json({ error: "The AI rejected the image. It may be a format we can't process." });
+               return res.status(400).json({ error: "The AI could not process this image. Try a smaller or simpler image." });
           }
           if (status === 403 || msg.includes("permission_denied")) {
                return res.status(500).json({ error: "Server authentication with AI provider failed." });
@@ -168,8 +181,15 @@ app.post('/api/generate', async (req, res) => {
       console.log("Generation Successful");
 
       // 7. RETURN RESPONSE
-      const returnedImage = `data:image/jpeg;base64,${base64Data}`;
-      res.json({ success: true, image: returnedImage, message: generatedText });
+      if (generatedImageBase64) {
+           const fullImage = `data:image/jpeg;base64,${generatedImageBase64}`;
+           res.json({ success: true, image: fullImage, message: "Image transformed successfully." });
+      } else {
+           // Fallback: If model only returned text (e.g. asking for clarification), return original image
+           console.warn("Model returned text only:", generatedText);
+           const originalImg = `data:image/jpeg;base64,${base64Data}`;
+           res.json({ success: true, image: originalImg, message: generatedText || "No visual changes generated." });
+      }
 
   } catch (serverError) {
     console.error("General Server Error:", serverError);
