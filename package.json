@@ -9,7 +9,7 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "@google/genai": "*",
+    "@google/generative-ai": "^0.21.0",
     "@supabase/supabase-js": "^2.39.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.1",
