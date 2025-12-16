@@ -1,20 +1,14 @@
-// BACKEND SERVER FOR UPSCALE IMAGERY AI
+// VERCEL SERVERLESS FUNCTION ENTRY POINT
 import express from 'express';
 import Stripe from 'stripe';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const app = express();
-const PORT = process.env.PORT || 3001;
 
 // --- CONFIGURATION ---
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://vgojlwhzxawmkdetywih.supabase.co';
@@ -22,7 +16,6 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SUPABASE_SERVICE_KEY) {
   console.error("CRITICAL ERROR: SUPABASE_SERVICE_ROLE_KEY is missing.");
-  // process.exit(1); // Optional: prevent crash in dev if key missing
 }
 
 const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
@@ -31,21 +24,9 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2023-10-16',
 });
 
+// Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(cors());
-
-// --- SECURITY MIDDLEWARE ---
-app.use((req, res, next) => {
-  const sensitiveFiles = ['/server.js', '/.env', '/package.json', '/tsconfig.json'];
-  if (sensitiveFiles.includes(req.path) || req.path.startsWith('/.git')) {
-    return res.status(403).send('Forbidden');
-  }
-  next();
-});
-
-// --- SERVE STATIC FILES (PRODUCTION) ---
-// Serve files from the 'dist' directory created by npm run build
-app.use(express.static(path.join(__dirname, 'dist')));
 
 // --- HELPER FUNCTIONS ---
 const getAuthenticatedUser = async (req) => {
@@ -58,7 +39,8 @@ const getAuthenticatedUser = async (req) => {
   return user;
 };
 
-// --- API ROUTES ---
+// --- ROUTES ---
+
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date() });
 });
@@ -146,13 +128,5 @@ app.post('/api/verify-checkout', async (req, res) => {
     }
 });
 
-// CATCH ALL: Serve React App
-app.get('*', (req, res) => {
-  if (req.path.startsWith('/api')) return res.status(404).json({ error: 'API route not found' });
-  // Send the index.html from the dist folder
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-});
-
-app.listen(PORT, () => {
-  console.log(`Backend Server running on port ${PORT}`);
-});
+// For Vercel, we export the app instead of listening
+export default app;

@@ -42,39 +42,36 @@ export const Generator: React.FC = () => {
       return;
     }
 
-    // --- PRE-CHECK: Free vs Paid ---
-    // Note: The server performs the hard check. This is just for UI feedback.
+    // --- CHECK: Free vs Paid ---
+    // Guests: Always Free Preview
+    // Users: Check credits
     let isFreePreview = false;
 
-    if (user.credits <= 0 && user.plan === PlanTier.NONE) {
-        if (!user.hasUsedFreeGen) {
-            isFreePreview = true;
-        } else {
-            if (!user.isAuthenticated) {
-              setError("Free preview used. Please sign up or log in to continue.");
-            } else {
-              setError("You have used your free preview. Please upgrade to continue generating.");
-              setShowPaymentModal(true);
-            }
-            return;
-        }
+    if (!user.isAuthenticated) {
+        isFreePreview = true;
+    } else if (user.credits <= 0 && user.plan === PlanTier.NONE) {
+        // User is logged in but has no credits.
+        // We prompt them to pay.
+        setError("You have 0 credits. Please purchase a pack to generate.");
+        setShowPaymentModal(true);
+        return;
     }
 
     setIsGenerating(true);
     setError(null);
 
     try {
-      // 1. CALL SERVER (Server deducts credit automatically)
+      // 1. CALL SERVER
       const resultBase64 = await GeminiService.transformImage(previewUrl, prompt);
       
       setGeneratedImage(resultBase64);
       StorageService.logEvent({ type: 'GENERATION_SUCCESS', timestamp: Date.now() });
       
-      // 2. SYNC STATE
-      // We immediately re-fetch the user profile from Supabase to get the updated credit count
-      // because the server just deducted it.
-      const updatedUser = await StorageService.syncUser();
-      setUser(updatedUser);
+      // 2. SYNC STATE (Only if logged in)
+      if (user.isAuthenticated) {
+        const updatedUser = await StorageService.syncUser();
+        setUser(updatedUser);
+      }
 
       // 3. SAVE IMAGE RECORD
       // Start with a local temp record
@@ -85,8 +82,8 @@ export const Generator: React.FC = () => {
         generatedImageBase64: resultBase64,
         prompt: prompt,
         timestamp: Date.now(),
-        // If they had credits (and thus server succeeded), it's unlocked.
-        // If it was a free preview logic (client side override), we keep it locked/watermarked until they pay.
+        // If user was authenticated and had credits, server deducted them, so it's unlocked.
+        // If guest (isFreePreview), it remains locked.
         isUnlocked: !isFreePreview, 
         isFreePreview: isFreePreview
       };
@@ -95,7 +92,8 @@ export const Generator: React.FC = () => {
       setCurrentImageId(savedRecord.id);
 
       if (isFreePreview) {
-          // If this was the "Free Preview", mark it used locally
+          // Record usage locally if needed, but we allow unlimited watermarked previews for now
+          // per user request "just allow them to generate"
           const u = StorageService.recordFreeUsage();
           setUser(u);
       }
@@ -134,20 +132,20 @@ export const Generator: React.FC = () => {
   };
 
   const currentRecord = getCurrentRecord();
+  // It is unlocked if the record says so, OR if we just generated it and the user had credits
   const isUnlocked = currentRecord?.isUnlocked || false;
-  const isFreePreviewMode = currentRecord?.isFreePreview && !isUnlocked;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
       
       {!user.isAuthenticated && (
-        <div className="bg-camel-50 border border-camel-200 p-4 rounded-lg mb-6 flex justify-between items-center">
+        <div className="bg-camel-50 border border-camel-200 p-4 rounded-lg mb-6 flex flex-col sm:flex-row justify-between items-center gap-4">
           <div>
-            <p className="text-navy-900 font-bold">Guest Mode</p>
-            <p className="text-sm text-slate-600">You are using your free preview. Sign up to save your work. By generating, you agree to our Terms.</p>
+            <p className="text-navy-900 font-bold">Try for Free</p>
+            <p className="text-sm text-slate-600">Generate unlimited previews. Sign up and pay to download the high-resolution, watermark-free versions.</p>
           </div>
-          <button onClick={() => navigate('/signup')} className="text-sm font-bold text-camel-600 hover:text-camel-800">
-            Sign Up &rarr;
+          <button onClick={() => navigate('/signup')} className="whitespace-nowrap bg-navy-800 text-white px-4 py-2 rounded text-sm font-medium hover:bg-navy-900">
+            Sign Up to Save
           </button>
         </div>
       )}
@@ -186,9 +184,6 @@ export const Generator: React.FC = () => {
           <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
             <div className="flex justify-between items-center mb-4">
                <h2 className="text-lg font-medium text-navy-900">2. Describe Transformation</h2>
-               {!user.hasUsedFreeGen && user.credits === 0 && (
-                   <span className="bg-green-100 text-green-800 text-xs font-bold px-2 py-1 rounded">Free Preview Available</span>
-               )}
             </div>
             
             <textarea
@@ -225,7 +220,7 @@ export const Generator: React.FC = () => {
               </span>
             ) : (
                 <span>
-                    {(!user.hasUsedFreeGen && user.credits === 0) ? "Generate Free Preview" : "Generate Transformation"}
+                    {!user.isAuthenticated ? "Generate Free Preview (Watermarked)" : "Generate Transformation"}
                 </span>
             )}
           </button>
@@ -259,10 +254,10 @@ export const Generator: React.FC = () => {
               <div className="flex justify-between items-center bg-white p-4 rounded border border-slate-200">
                 <div>
                     <p className="text-sm font-bold text-navy-900">
-                        {isUnlocked ? 'Image Unlocked' : (isFreePreviewMode ? 'Free Preview' : 'Preview Mode')}
+                        {isUnlocked ? 'Image Unlocked' : 'Free Preview Mode'}
                     </p>
                     <p className="text-xs text-slate-500">
-                        {isUnlocked ? 'Ready for download' : (user.isAuthenticated ? 'Purchase to remove watermark' : 'Sign up to unlock')}
+                        {isUnlocked ? 'Ready for download' : (user.isAuthenticated ? 'Purchase to remove watermark' : 'Log in & Pay to download')}
                     </p>
                 </div>
                 {isUnlocked ? (

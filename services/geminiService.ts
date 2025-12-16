@@ -4,7 +4,7 @@ import { supabase } from './supabaseClient';
 export const GeminiService = {
   /**
    * Generates a transformed image by calling the secure backend API.
-   * Includes the User's JWT token for security and billing.
+   * Works for both Authenticated Users and Guests.
    */
   transformImage: async (
     imageBase64: string,
@@ -12,20 +12,22 @@ export const GeminiService = {
   ): Promise<string> => {
     
     try {
-      // 1. Get current session token to prove identity to server
+      // 1. Try to get current session token
       const { data: { session } } = await supabase.auth.getSession();
       
-      if (!session) {
-        throw new Error("You must be logged in to generate images.");
+      const headers: any = {
+        'Content-Type': 'application/json'
+      };
+
+      // Only attach token if logged in
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
       }
 
       // 2. Call Backend
       const response = await fetch('/api/generate', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}` // PASS TOKEN
-        },
+        headers: headers,
         body: JSON.stringify({
             imageBase64,
             prompt: userPrompt

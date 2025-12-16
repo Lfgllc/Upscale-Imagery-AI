@@ -6,54 +6,20 @@
     
     <!-- Primary Meta Tags -->
     <title>Upscale Imagery AI | Professional Headshots & Style Transformation</title>
-    <meta name="title" content="Upscale Imagery AI | Professional Headshots & Style Transformation">
-    <meta name="description" content="Transform your look while keeping your identity. Professional AI headshots, wardrobe changes, and style upgrades. Created by Chasity Willis (@itschasnicole).">
-    <meta name="keywords" content="AI headshots, professional photos, AI styling, identity preservation, upscale imagery, Chasity Willis, itschasnicole, entrepreneur branding">
-    <meta name="author" content="Chasity Willis (@itschasnicole)">
-    <meta name="apple-mobile-web-app-title" content="Upscale AI">
-
-    <!-- Open Graph / Facebook / LinkedIn -->
-    <meta property="og:type" content="website">
-    <meta property="og:url" content="https://www.upscaleimageryai.com/">
-    <meta property="og:title" content="Upscale Imagery AI | Professional Headshots & Style Transformation">
-    <meta property="og:description" content="Transform your look while keeping your identity. Professional AI headshots, wardrobe changes, and style upgrades. Created by Chasity Willis.">
-    <meta property="og:image" content="https://www.upscaleimageryai.com/logo.png">
-
-    <!-- Twitter -->
-    <meta property="twitter:card" content="summary_large_image">
-    <meta property="twitter:url" content="https://www.upscaleimageryai.com/">
-    <meta property="twitter:title" content="Upscale Imagery AI | Professional Headshots & Style Transformation">
-    <meta property="twitter:description" content="Transform your look while keeping your identity. Professional AI headshots, wardrobe changes, and style upgrades.">
-    <meta property="twitter:image" content="https://www.upscaleimageryai.com/logo.png">
-
-    <!-- Canonical URL -->
-    <link rel="canonical" href="https://www.upscaleimageryai.com/" />
-  
-    <link rel="icon" type="image/png" href="/logo.png" />
-
+    <meta name="description" content="Transform your look while keeping your identity. Professional AI headshots, wardrobe changes, and style upgrades. Created by Chasity Willis.">
+    
+    <!-- Tailwind CSS (CDN for simplicity in this setup, usually bundled) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
           extend: {
             colors: {
-              navy: {
-                800: '#0a192f',
-                900: '#020c1b',
-              },
-              camel: {
-                500: '#c19a6b',
-                600: '#a68050',
-              },
-              tan: {
-                100: '#f5f0e6',
-                200: '#e6dbcc',
-                500: '#d2b48c',
-              }
+              navy: { 800: '#0a192f', 900: '#020c1b' },
+              camel: { 500: '#c19a6b', 600: '#a68050' },
+              tan: { 100: '#f5f0e6', 200: '#e6dbcc', 500: '#d2b48c' }
             },
-            fontFamily: {
-              sans: ['Inter', 'sans-serif'],
-            }
+            fontFamily: { sans: ['Inter', 'sans-serif'] }
           }
         }
       }
@@ -61,52 +27,37 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
       body { font-family: 'Inter', sans-serif; }
-      /* Watermark Pattern */
-      .watermarked {
-        position: relative;
-        overflow: hidden;
-      }
+      .watermarked { position: relative; overflow: hidden; }
       .watermarked::after {
         content: "Upscale Imagery AI • PREVIEW • Upscale Imagery AI • PREVIEW";
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%) rotate(-45deg);
-        font-size: 24px;
-        font-weight: 900;
-        color: rgba(255, 255, 255, 0.4);
-        white-space: nowrap;
-        pointer-events: none;
-        width: 200%;
-        text-align: center;
-        text-shadow: 0 0 10px rgba(0,0,0,0.5);
-        z-index: 20;
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-45deg);
+        font-size: 24px; font-weight: 900; color: rgba(255, 255, 255, 0.4);
+        white-space: nowrap; pointer-events: none; width: 200%; text-align: center;
+        text-shadow: 0 0 10px rgba(0,0,0,0.5); z-index: 20;
       }
       .watermarked-grid::before {
-        content: "";
-        position: absolute;
-        inset: 0;
+        content: ""; position: absolute; inset: 0;
         background-image: repeating-linear-gradient(45deg, transparent, transparent 40px, rgba(255,255,255,0.1) 40px, rgba(255,255,255,0.1) 80px);
-        z-index: 10;
-        pointer-events: none;
+        z-index: 10; pointer-events: none;
       }
     </style>
-  <script type="importmap">
+<script type="importmap">
 {
   "imports": {
     "react": "https://esm.sh/react@^19.2.3",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
     "react/": "https://esm.sh/react@^19.2.3/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.33.0",
     "react-router-dom": "https://esm.sh/react-router-dom@^7.10.1",
-    "dotenv": "https://esm.sh/dotenv@^17.2.3",
-    "cors": "https://esm.sh/cors@^2.8.5",
     "express": "https://esm.sh/express@^5.2.1",
     "stripe": "https://esm.sh/stripe@^20.0.0",
+    "cors": "https://esm.sh/cors@^2.8.5",
+    "dotenv": "https://esm.sh/dotenv@^17.2.3",
     "path": "https://esm.sh/path@^0.12.7",
     "url": "https://esm.sh/url@^0.11.4",
-    "nodemailer": "https://esm.sh/nodemailer@^7.0.11",
-    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.3"
+    "@google/genai": "https://esm.sh/@google/genai@^1.33.0",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@^2.87.3",
+    "vite": "https://esm.sh/vite@^7.3.0",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
   }
 }
 </script>
