@@ -3,7 +3,7 @@ import express from 'express';
 import Stripe from 'stripe';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
@@ -68,35 +68,50 @@ app.post('/api/generate', async (req, res) => {
     }
 
     // Initialize with correct SDK and Key
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const ai = new GoogleGenAI({ apiKey });
     
+    // Ensure clean base64 string
     const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
 
-    const result = await model.generateContent([
-        `Professional photo editor task. Preserve identity strictly. ${prompt}`,
-        {
-            inlineData: {
-                data: cleanBase64,
-                mimeType: "image/jpeg",
-            },
-        },
-    ]);
+    // Call Gemini 2.5 Flash Image for editing
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: {
+            parts: [
+                {
+                    inlineData: {
+                        mimeType: "image/jpeg",
+                        data: cleanBase64
+                    }
+                },
+                {
+                    text: `Professional photo edit. Preserve identity strictly. ${prompt}`
+                }
+            ]
+        }
+    });
 
-    const response = await result.response;
-    const text = response.text();
+    // Extract the generated image from response
+    let generatedImage = null;
+    let messageText = "";
 
-    // NOTE: Gemini 1.5 Flash via this SDK returns text descriptions.
-    // It does not currently return modified image bytes in this specific flow.
-    // To ensure the app "works" (completes the loop) for the launch, we log the text
-    // and return the original image so the user sees a result and the credit logic holds.
-    
-    console.log("AI Response (Text):", text);
-    
-    // Fallback: Return original image to ensure 'success' state in UI
-    const generatedImage = cleanBase64; 
+    if (response.candidates && response.candidates[0].content.parts) {
+        for (const part of response.candidates[0].content.parts) {
+            if (part.inlineData) {
+                generatedImage = `data:image/jpeg;base64,${part.inlineData.data}`;
+            } else if (part.text) {
+                messageText += part.text;
+            }
+        }
+    }
 
-    res.json({ success: true, image: generatedImage, message: text });
+    if (!generatedImage) {
+        console.warn("No image generated, returning original with warning.");
+        console.log("Model Text Response:", messageText);
+        generatedImage = imageBase64;
+    }
+
+    res.json({ success: true, image: generatedImage, message: messageText });
 
   } catch (error) {
     console.error("Generation Error:", error);

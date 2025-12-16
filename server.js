@@ -5,7 +5,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
@@ -83,38 +83,52 @@ app.post('/api/generate', async (req, res) => {
         if (updateError) throw new Error("Credit deduction failed");
     }
 
-    // Initialize with standard SDK
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // Initialize with correct SDK and Key
+    const ai = new GoogleGenAI({ apiKey });
     
+    // Ensure clean base64 string
     const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
 
-    const result = await model.generateContent([
-        `Act as a professional photo editor. I will provide an image and a request. 
-         Since you cannot generate images directly, please describe exactly how you would edit this image to match the request: ${prompt}`,
-        {
-            inlineData: {
-                data: cleanBase64,
-                mimeType: "image/jpeg",
-            },
-        },
-    ]);
+    // Call Gemini 2.5 Flash Image for editing
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: {
+            parts: [
+                {
+                    inlineData: {
+                        mimeType: "image/jpeg",
+                        data: cleanBase64
+                    }
+                },
+                {
+                    text: `Professional photo edit. Preserve identity strictly. ${prompt}`
+                }
+            ]
+        }
+    });
 
-    const response = await result.response;
-    const text = response.text();
+    // Extract the generated image from response
+    let generatedImage = null;
+    let messageText = "";
 
-    // NOTE: Gemini 1.5 Flash is a multimodal model that outputs TEXT. 
-    // It does not output image bytes directly. 
-    // To prevent the app from crashing during your demo/launch, we will log the text response 
-    // and return the ORIGINAL image so the flow completes successfully.
-    // In a future update, you can switch to the Imagen API for true image generation.
-    
-    console.log("AI Response (Text):", text);
-    
-    // Fallback: Return original image to ensure 'success' state in UI
-    const generatedImage = cleanBase64; 
+    if (response.candidates && response.candidates[0].content.parts) {
+        for (const part of response.candidates[0].content.parts) {
+            if (part.inlineData) {
+                generatedImage = `data:image/jpeg;base64,${part.inlineData.data}`;
+            } else if (part.text) {
+                messageText += part.text;
+            }
+        }
+    }
 
-    res.json({ success: true, image: generatedImage, message: text });
+    if (!generatedImage) {
+        console.warn("No image generated, returning original with warning.");
+        console.log("Model Text Response:", messageText);
+        // Fallback for safety if model refuses or fails to generate image
+        generatedImage = imageBase64;
+    }
+
+    res.json({ success: true, image: generatedImage, message: messageText });
 
   } catch (error) {
     console.error("Generation Error:", error);
@@ -157,4 +171,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log
+  console.log(`Server running on port ${PORT}`);
+});
