@@ -73,22 +73,31 @@ app.post('/api/generate', async (req, res) => {
 
     const ai = new GoogleGenAI({ apiKey: API_KEY });
     
-    console.log("Processing Generation (gemini-2.5-flash-image)...");
+    console.log("Processing Generation...");
     
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: {
-            parts: [
-                {
-                    inlineData: {
-                        data: base64Data,
-                        mimeType: "image/jpeg",
-                    }
-                },
-                { text: prompt }
-            ]
-        }
-    });
+    const parts = [
+        {
+            inlineData: {
+                data: base64Data,
+                mimeType: "image/jpeg",
+            }
+        },
+        { text: prompt }
+    ];
+
+    let response;
+    try {
+        response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: [{ role: 'user', parts: parts }]
+        });
+    } catch (primaryError) {
+        console.warn(`Primary model failed, attempting fallback...`);
+        response = await ai.models.generateContent({
+            model: 'gemini-2.0-flash-exp',
+            contents: [{ role: 'user', parts: parts }]
+        });
+    }
 
     let generatedImageBase64 = null;
     let generatedText = "";

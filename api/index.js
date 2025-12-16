@@ -95,26 +95,37 @@ app.post('/api/generate', async (req, res) => {
       try {
           const ai = new GoogleGenAI({ apiKey: API_KEY });
           
-          console.log(`Sending request to Gemini (Model: gemini-2.5-flash-image)... Payload size: ${Math.round(base64Data.length / 1024)}KB`);
+          console.log(`Sending request to Gemini... Payload size: ${Math.round(base64Data.length / 1024)}KB`);
           
-          // Use the Image Editing model
-          // Note: Parts order matters for some models. Image first, then text prompt.
-          const response = await ai.models.generateContent({
-              model: 'gemini-2.5-flash-image', 
-              contents: {
-                  parts: [
-                      {
-                          inlineData: {
-                              data: base64Data,
-                              mimeType: "image/jpeg",
-                          }
-                      },
-                      { 
-                          text: prompt 
-                      }
-                  ]
+          const parts = [
+              {
+                  inlineData: {
+                      data: base64Data,
+                      mimeType: "image/jpeg",
+                  }
+              },
+              { 
+                  text: prompt 
               }
-          });
+          ];
+
+          let response;
+          try {
+             // Attempt primary model
+             response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash-image', 
+                contents: [{ role: 'user', parts: parts }] // Wrap in array explicitly
+             });
+          } catch (primaryError) {
+             console.warn(`Primary model failed (${primaryError.status || 'unknown'}), attempting fallback...`);
+             console.error("Primary Error Details:", JSON.stringify(primaryError, Object.getOwnPropertyNames(primaryError)));
+             
+             // Fallback to experimental flash model which is often more permissive/available
+             response = await ai.models.generateContent({
+                model: 'gemini-2.0-flash-exp', 
+                contents: [{ role: 'user', parts: parts }]
+             });
+          }
 
           // Extract Output (Image or Text)
           if (response.candidates?.[0]?.content?.parts) {
@@ -133,16 +144,13 @@ app.post('/api/generate', async (req, res) => {
           }
 
       } catch (geminiError) {
-          console.error("Gemini API Error Object:", JSON.stringify(geminiError, null, 2));
-          if (geminiError.response) {
-             console.error("Gemini Error Body:", JSON.stringify(geminiError.response, null, 2));
-          }
-
+          console.error("Gemini API Error Object:", JSON.stringify(geminiError, Object.getOwnPropertyNames(geminiError)));
+          
           const msg = (geminiError.message || "").toLowerCase();
           const status = geminiError.status || 500;
 
           if (status === 400 || msg.includes("invalid_argument")) {
-               return res.status(400).json({ error: "The AI could not process this image. Try a smaller or simpler image." });
+               return res.status(400).json({ error: "The AI could not process this image. It may be too complex or the format is unsupported." });
           }
           if (status === 403 || msg.includes("permission_denied")) {
                return res.status(500).json({ error: "Server authentication with AI provider failed." });
