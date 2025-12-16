@@ -4,21 +4,13 @@ import Stripe from 'stripe';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { createClient } from '@supabase/supabase-js';
+
+// CRITICAL FIX: Import with .js extension for ESM compatibility
+import supabaseAdmin from './supabaseClient.js';
 
 dotenv.config();
 
 const app = express();
-
-// --- CONFIGURATION ---
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://vgojlwhzxawmkdetywih.supabase.co';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!SUPABASE_SERVICE_KEY) {
-  console.error("CRITICAL ERROR: SUPABASE_SERVICE_ROLE_KEY is missing.");
-}
-
-const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2023-10-16',

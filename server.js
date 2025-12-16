@@ -6,7 +6,9 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { createClient } from '@supabase/supabase-js';
+
+// CRITICAL FIX: Import shared client with .js extension
+import supabaseAdmin from './api/supabaseClient.js';
 
 dotenv.config();
 
@@ -15,16 +17,6 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-
-// --- CONFIGURATION ---
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://vgojlwhzxawmkdetywih.supabase.co';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!SUPABASE_SERVICE_KEY) {
-  console.error("CRITICAL ERROR: SUPABASE_SERVICE_ROLE_KEY is missing.");
-}
-
-const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2023-10-16',
