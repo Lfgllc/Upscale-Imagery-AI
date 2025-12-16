@@ -22,8 +22,11 @@ export const Generator: React.FC = () => {
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      if (file.size > 4 * 1024 * 1024) {
-        setError("File size must be under 4MB");
+      // SAFARI/VERCEL FIX: Reduced to 3MB. 
+      // Base64 encoding adds ~33% overhead. 4MB file -> ~5.3MB payload.
+      // Vercel Serverless limit is 4.5MB. Exceeding this returns HTML 413, causing JSON parse error in Safari.
+      if (file.size > 3 * 1024 * 1024) {
+        setError("File size must be under 3MB to ensure processing.");
         return;
       }
       setSelectedFile(file);
@@ -175,7 +178,7 @@ export const Generator: React.FC = () => {
                     <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                   <p className="text-sm text-slate-600">Click to upload or drag and drop</p>
-                  <p className="text-xs text-slate-500">PNG, JPG up to 4MB</p>
+                  <p className="text-xs text-slate-500">PNG, JPG up to 3MB</p>
                 </div>
               )}
             </div>
