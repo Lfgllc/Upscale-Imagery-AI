@@ -5,7 +5,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 
-// CRITICAL: Import with .js extension for ESM compatibility in Vercel
+// CRITICAL: Import with .js extension for ESM compatibility in Vercel environment
 import supabaseAdmin from './supabaseClient.js';
 
 dotenv.config();
@@ -56,8 +56,7 @@ app.post('/api/generate', async (req, res) => {
   }
 
   try {
-    // 2. CHECK CREDITS (Before calling Gemini)
-    // We strictly block generation if credits are <= 0
+    // 2. CHECK CREDITS (Strict Check Before Generation)
     if (user) {
         const { data: profile } = await supabaseAdmin
             .from('profiles')
@@ -70,13 +69,12 @@ app.post('/api/generate', async (req, res) => {
         }
 
         if (profile.credits < 1) {
-            return res.status(403).json({ error: "Insufficient credits. Please upgrade or buy a pack to generate images." });
+            return res.status(403).json({ error: "Insufficient credits. Please purchase a pack to generate images." });
         }
     }
 
     // 3. SANITIZE DATA
-    // Remove Data URI prefix and whitespace to prevent DOMException in Gemini SDK
-    // The SDK expects raw base64 data for inlineData
+    // Remove Data URI prefix and aggressively clean whitespace/newlines to prevent SDK errors
     const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
     const cleanBase64 = base64Data.replace(/[\s\r\n]+/g, "");
 
@@ -106,10 +104,10 @@ app.post('/api/generate', async (req, res) => {
     // Extract text from the new SDK response structure
     const generatedText = response.text; 
 
-    // 5. DEDUCT CREDITS (ONLY after successful execution)
-    // If the code reaches here, Gemini didn't throw an error.
+    // 5. DEDUCT CREDITS (Only after successful execution)
+    // If the code reaches here, Gemini execution was successful.
     if (user) {
-        // Fetch fresh credits to ensure we don't overwrite a concurrent transaction
+        // Fetch fresh credits to ensure concurrency safety
         const { data: freshProfile } = await supabaseAdmin
             .from('profiles')
             .select('credits')
@@ -131,14 +129,14 @@ app.post('/api/generate', async (req, res) => {
     console.log("AI Generation Successful");
 
     // 6. RETURN RESPONSE
-    // We loop back the cleaned base64 with the prefix so the frontend can display it
+    // Return original image as 'result' for now (simulating edit) + text description
     const returnedImage = `data:image/jpeg;base64,${cleanBase64}`;
 
     res.json({ success: true, image: returnedImage, message: generatedText });
 
   } catch (error) {
     console.error("Generation Error:", error);
-    // DO NOT deduct credits here. The user is not charged for failed requests.
+    // DO NOT deduct credits here. 
     res.status(500).json({ error: error.message || "Generation Failed" });
   }
 });
