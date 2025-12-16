@@ -4,7 +4,6 @@ import Stripe from 'stripe';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
-import sharp from 'sharp';
 
 // CRITICAL: Import with .js extension for ESM compatibility in Vercel environment
 import supabaseAdmin from './supabaseClient.js';
@@ -18,8 +17,8 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2023-10-16',
 });
 
-// Middleware: High limit for image uploads (though Vercel strictly enforces 4.5MB)
-app.use(express.json({ limit: '10mb' }));
+// Middleware: Set limit to 4.5MB to match Vercel's hard limit, preventing cryptic 413s from infrastructure
+app.use(express.json({ limit: '4.5mb' }));
 app.use(cors());
 
 // --- HELPER FUNCTIONS ---
@@ -75,95 +74,94 @@ app.post('/api/generate', async (req, res) => {
         }
     }
 
-    // 3. IMAGE PROCESSING & SANITIZATION
-    // We use 'sharp' to safely resize and compress the image on the server.
-    // This prevents "unexpected format" errors from Gemini and handles memory efficiently.
-    let optimizedBase64 = "";
-    try {
-        // Strip data URI prefix if present
-        const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-        const inputBuffer = Buffer.from(base64Data, 'base64');
-
-        // Resize to max 1024x1024 (fit: inside) and convert to JPEG (quality: 80)
-        const processedBuffer = await sharp(inputBuffer)
-            .resize(1024, 1024, { 
-                fit: 'inside', 
-                withoutEnlargement: true // Don't upscale small images
-            })
-            .jpeg({ 
-                quality: 80, 
-                mozjpeg: true // Better compression
-            })
-            .toBuffer();
-        
-        optimizedBase64 = processedBuffer.toString('base64');
-    } catch (imgError) {
-        console.error("Image Processing Failed:", imgError);
-        return res.status(400).json({ error: "Invalid image format. Please upload a valid PNG or JPEG image." });
+    // 3. SANITIZATION (No heavy processing)
+    // We trust the client has resized this to < 4MB. 
+    // If it's larger, Vercel/Express would have already rejected it.
+    let cleanBase64 = imageBase64;
+    if (imageBase64.includes('base64,')) {
+        cleanBase64 = imageBase64.split('base64,')[1];
     }
 
     // 4. EXECUTE GEMINI GENERATION
-    const ai = new GoogleGenAI({ apiKey: API_KEY });
-    
-    // Using 'gemini-2.5-flash' for basic image editing/generation tasks
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: {
-            parts: [
-                { 
-                    text: `Act as a professional photo editor. The user wants to edit the attached image. 
-                           Instruction: ${prompt}. 
-                           Describe the visual changes you would make in high detail, as if you were describing the final edited image.` 
-                },
-                {
-                    inlineData: {
-                        data: optimizedBase64,
-                        mimeType: "image/jpeg",
+    try {
+        const ai = new GoogleGenAI({ apiKey: API_KEY });
+        
+        // Using 'gemini-2.5-flash' for efficiency
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: {
+                parts: [
+                    { 
+                        text: `Act as a professional photo editor. The user wants to edit the attached image. 
+                               Instruction: ${prompt}. 
+                               Describe the visual changes you would make in high detail, as if you were describing the final edited image.
+                               Ensure the output describes a complete, high-quality image.` 
+                    },
+                    {
+                        inlineData: {
+                            data: cleanBase64,
+                            mimeType: "image/jpeg",
+                        }
                     }
-                }
-            ]
-        }
-    });
+                ]
+            }
+        });
 
-    // Extract text from the SDK response
-    const generatedText = response.text; 
+        // Extract text from the SDK response
+        const generatedText = response.text; 
 
-    // 5. DEDUCT CREDITS (Only after successful execution)
-    if (user) {
-        // Fetch fresh credits to ensure concurrency safety
-        const { data: freshProfile } = await supabaseAdmin
-            .from('profiles')
-            .select('credits')
-            .eq('id', user.id)
-            .single();
-
-        if (freshProfile && freshProfile.credits > 0) {
-            const { error: updateError } = await supabaseAdmin
+        // 5. DEDUCT CREDITS (Only after successful execution)
+        if (user) {
+            // Fetch fresh credits to ensure concurrency safety
+            const { data: freshProfile } = await supabaseAdmin
                 .from('profiles')
-                .update({ credits: freshProfile.credits - 1 })
-                .eq('id', user.id);
-            
-            if (updateError) {
-                console.error("Failed to deduct credit after success:", updateError);
+                .select('credits')
+                .eq('id', user.id)
+                .single();
+
+            if (freshProfile && freshProfile.credits > 0) {
+                const { error: updateError } = await supabaseAdmin
+                    .from('profiles')
+                    .update({ credits: freshProfile.credits - 1 })
+                    .eq('id', user.id);
+                
+                if (updateError) {
+                    console.error("Failed to deduct credit after success:", updateError);
+                }
             }
         }
+
+        console.log("AI Generation Successful");
+
+        // 6. RETURN RESPONSE
+        // Return the clean base64 we used (preserving client optimization)
+        const returnedImage = `data:image/jpeg;base64,${cleanBase64}`;
+        res.json({ success: true, image: returnedImage, message: generatedText });
+
+    } catch (apiError) {
+        console.error("Gemini API Error:", apiError);
+        // Provide user-friendly error messages based on status
+        if (apiError.status === 503) {
+            throw new Error("AI service is currently busy. Please try again in a few seconds.");
+        } else if (apiError.status === 400) {
+             throw new Error("The AI rejected the request. The image might be unclear or violates safety policies.");
+        }
+        throw apiError; // Re-throw to be caught by outer catch
     }
 
-    console.log("AI Generation Successful");
-
-    // 6. RETURN RESPONSE
-    // Return the optimized image so the client displays exactly what was processed
-    const returnedImage = `data:image/jpeg;base64,${optimizedBase64}`;
-
-    res.json({ success: true, image: returnedImage, message: generatedText });
-
   } catch (error) {
-    console.error("Generation Error:", error);
+    console.error("Route Error:", error);
     // User-friendly error mapping
-    let errorMessage = "Generation Failed";
-    if (error.message?.includes('413')) errorMessage = "Image is too large for the AI model.";
-    else if (error.message?.includes('503')) errorMessage = "AI Service is temporarily busy. Please try again.";
+    let errorMessage = "Generation Failed. Please try again.";
     
+    // Explicit check for PayloadTooLarge from Express/Vercel
+    if (error.type === 'entity.too.large' || error.message?.includes('too large') || error.message?.includes('413')) {
+        errorMessage = "Image is too large. Please upload a file smaller than 4MB.";
+    }
+    else if (error.message?.includes('Safety')) errorMessage = "Request blocked by safety filters.";
+    else if (error.message?.includes('busy')) errorMessage = "AI Service is temporarily busy. Please try again.";
+    else if (error.message) errorMessage = error.message;
+
     // DO NOT deduct credits here. 
     res.status(500).json({ error: errorMessage });
   }

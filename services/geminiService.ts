@@ -34,6 +34,14 @@ export const GeminiService = {
         })
       });
 
+      // 3. Handle Vercel Platform Errors (413, 504, 500) that return HTML
+      if (response.status === 413) {
+          throw new Error("Image is too large for the server. Please check the compression settings.");
+      }
+      if (response.status === 504) {
+          throw new Error("The AI server timed out. Please try again with a simpler prompt.");
+      }
+
       // SAFARI FIX: Check Content-Type before parsing JSON. 
       // Vercel may return HTML (413/500) which causes JSON.parse to throw "The string did not match the expected pattern" in Safari.
       const contentType = response.headers.get('content-type');
@@ -53,9 +61,13 @@ export const GeminiService = {
       } else {
           // Handle non-JSON response (e.g. HTML 500/413 error page)
           const text = await response.text();
-          // Log the raw text for debugging but throw a clean error
-          console.error("Non-JSON Response:", text);
-          throw new Error(`Server returned unexpected format (${response.status}). Please try a smaller image.`);
+          console.error("Non-JSON Response:", text); // Log for debugging
+          
+          if (response.status === 500) {
+              throw new Error("Internal Server Error. The AI service might be down.");
+          }
+          
+          throw new Error(`Server returned unexpected format (${response.status}). The image might be too large.`);
       }
 
     } catch (error: any) {

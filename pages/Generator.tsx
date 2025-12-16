@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { StorageService } from '../services/storageService';
 import { GeminiService } from '../services/geminiService';
 import { User, ImageRecord, PlanTier, PLANS } from '../types';
+import heic2any from 'heic2any';
 
 export const Generator: React.FC = () => {
   const navigate = useNavigate();
@@ -21,20 +22,38 @@ export const Generator: React.FC = () => {
   const [currentImageId, setCurrentImageId] = useState<string | null>(null);
 
   // --- CLIENT-SIDE IMAGE PROCESSING ---
-  const processImage = (file: File): Promise<string> => {
+  const processImage = async (file: File): Promise<string> => {
+    // 1. Handle HEIC/HEIF Conversion
+    let sourceFile = file;
+    if (file.type === 'image/heic' || file.name.toLowerCase().endsWith('.heic')) {
+      try {
+        console.log("Detected HEIC, converting...");
+        const convertedBlob = await heic2any({
+          blob: file,
+          toType: 'image/jpeg',
+          quality: 0.7
+        });
+        const blobToUse = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
+        sourceFile = new File([blobToUse], file.name.replace(/\.heic$/i, '.jpg'), { type: 'image/jpeg' });
+      } catch (e) {
+        console.warn('HEIC conversion failed, attempting standard load', e);
+      }
+    }
+
     return new Promise((resolve, reject) => {
-      // 1. Read the file
+      // 2. Read the file
       const reader = new FileReader();
-      reader.readAsDataURL(file);
+      reader.readAsDataURL(sourceFile);
       
       reader.onload = (event) => {
         const img = new Image();
         img.src = event.target?.result as string;
         
         img.onload = () => {
-          // 2. Calculate new dimensions (Max 1024x1024)
-          const MAX_WIDTH = 1024;
-          const MAX_HEIGHT = 1024;
+          // 3. Calculate new dimensions (Max 800x800 for safety)
+          // Aggressive resizing ensures we stay well under Vercel's 4.5MB limit
+          const MAX_WIDTH = 800;
+          const MAX_HEIGHT = 800;
           let width = img.width;
           let height = img.height;
 
@@ -50,7 +69,7 @@ export const Generator: React.FC = () => {
             }
           }
 
-          // 3. Create Canvas and Draw
+          // 4. Create Canvas and Draw
           const canvas = document.createElement('canvas');
           canvas.width = width;
           canvas.height = height;
@@ -66,9 +85,8 @@ export const Generator: React.FC = () => {
           ctx.fillRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
           
-          // 4. Export compressed JPEG (0.8 quality)
-          // This dramatically reduces file size while keeping visual quality high for AI
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          // 5. Export compressed JPEG (0.7 quality)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
           resolve(dataUrl);
         };
         
@@ -94,13 +112,18 @@ export const Generator: React.FC = () => {
         const optimizedBase64 = await processImage(file);
         
         // Debug: Log approximate new size
-        const approximateSize = (optimizedBase64.length * 3) / 4 / 1024 / 1024;
-        console.log(`Optimized size: ${approximateSize.toFixed(2)} MB`);
+        const approximateSizeMB = (optimizedBase64.length * 3) / 4 / 1024 / 1024;
+        console.log(`Optimized size: ${approximateSizeMB.toFixed(2)} MB`);
         
+        // Safety Check: If for some reason it's still huge (unlikely with 800px), warn user
+        if (approximateSizeMB > 4.0) {
+            throw new Error("Image could not be compressed enough. Please use a smaller file.");
+        }
+
         setPreviewUrl(optimizedBase64);
       } catch (err: any) {
         console.error("Image processing error:", err);
-        setError("Failed to process image. Please try a valid JPEG or PNG file.");
+        setError(err.message || "Failed to process image. Please try a valid JPEG, PNG, or HEIC file.");
       } finally {
         setIsProcessing(false);
       }
@@ -222,7 +245,7 @@ export const Generator: React.FC = () => {
                 type="file" 
                 ref={fileInputRef} 
                 className="hidden" 
-                accept="image/jpeg, image/png, image/webp" 
+                accept="image/jpeg, image/png, image/webp, image/heic" 
                 onChange={handleFileChange}
               />
               
@@ -242,7 +265,7 @@ export const Generator: React.FC = () => {
                     <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                   <p className="text-sm text-slate-600">Click to upload or drag and drop</p>
-                  <p className="text-xs text-slate-500">JPG, PNG (Auto-optimized)</p>
+                  <p className="text-xs text-slate-500">JPG, PNG, HEIC (Auto-optimized)</p>
                 </div>
               )}
             </div>
