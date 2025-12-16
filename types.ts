@@ -102,8 +102,8 @@ export const PLANS: PricingPlan[] = [
     id: PlanTier.BASIC,
     name: 'Basic',
     price: 9.99,
-    credits: 50,
-    features: ['50 Edit Credits/mo', 'Priority Support'], // No rollover
+    credits: 25,
+    features: ['25 Edit Credits/mo', 'Priority Support'], // No rollover
     isSubscription: true,
     paymentLink: 'https://buy.stripe.com/cNi14gddhc2M4Ws3RR9oc01'
   },
@@ -111,17 +111,17 @@ export const PLANS: PricingPlan[] = [
     id: PlanTier.PRO,
     name: 'Pro',
     price: 19.99,
-    credits: 100,
-    features: ['100 Edit Credits/mo', 'Roll-over credits', 'Faster Processing'],
+    credits: 50,
+    features: ['50 Edit Credits/mo', 'Roll-over credits', 'Faster Processing'],
     isSubscription: true,
     paymentLink: 'https://buy.stripe.com/4gM00c0qvd6QdsY0FF9oc02'
   },
   {
     id: PlanTier.ELITE,
     name: 'Elite',
-    price: 29.99,
-    credits: 200,
-    features: ['200 Edit Credits/mo', 'Roll-over credits', 'Commercial License'],
+    price: 34.99,
+    credits: 100,
+    features: ['100 Edit Credits/mo', 'Roll-over credits', 'Commercial License'],
     isSubscription: true,
     paymentLink: 'https://buy.stripe.com/eVq28k0qv7Mwex23RR9oc03'
   }

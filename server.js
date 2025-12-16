@@ -5,7 +5,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+// Using the new, recommended SDK
+import { GoogleGenAI } from '@google/genai';
 
 // CRITICAL FIX: Import shared client with .js extension
 import supabaseAdmin from './api/supabaseClient.js';
@@ -22,6 +23,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2023-10-16',
 });
 
+// Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(cors());
 
@@ -55,58 +57,98 @@ app.get('/api/health', (req, res) => {
 
 app.post('/api/generate', async (req, res) => {
   const { imageBase64, prompt } = req.body;
+  
+  if (!imageBase64) {
+    return res.status(400).json({ error: "No image provided" });
+  }
+
+  // 1. Authenticate User
   const user = await getAuthenticatedUser(req);
-  let profile = null;
+  let currentCredits = 0;
 
   // Resolve API Key
-  const API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY || process.env.GOOGLE_API_KEY;
+  const API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
   if (!API_KEY) {
     return res.status(500).json({ error: "Server GEMINI_API_KEY missing" });
   }
 
   try {
+    // 2. CHECK CREDITS (Before generation)
     if (user) {
-        const { data } = await supabaseAdmin.from('profiles').select('credits').eq('id', user.id).single();
-        profile = data;
+        const { data: profile } = await supabaseAdmin
+            .from('profiles')
+            .select('credits')
+            .eq('id', user.id)
+            .single();
 
-        if (!profile || profile.credits < 1) {
-            return res.status(403).json({ error: "Insufficient credits. Please upgrade or buy a pack." });
+        if (!profile) {
+            return res.status(404).json({ error: "User profile not found." });
         }
-        const { error: updateError } = await supabaseAdmin.from('profiles').update({ credits: profile.credits - 1 }).eq('id', user.id);
-        if (updateError) throw new Error("Credit deduction failed");
+
+        currentCredits = profile.credits;
+
+        if (currentCredits < 1) {
+            return res.status(403).json({ error: "Insufficient credits. Please upgrade or buy a pack to generate images." });
+        }
     }
 
-    // Initialize with correct SDK and Key
-    const genAI = new GoogleGenerativeAI(API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // 3. PREPARE DATA
+    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+    const cleanBase64 = base64Data.replace(/\s/g, "");
+
+    // 4. CALL GEMINI
+    const ai = new GoogleGenAI({ apiKey: API_KEY });
     
-    const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: {
+            parts: [
+                { 
+                    text: `Act as a professional photo editor. The user wants to edit the attached image. 
+                           Instruction: ${prompt}. 
+                           Describe the changes you would make in vivid detail as if you were returning the edited layer.` 
+                },
+                {
+                    inlineData: {
+                        data: cleanBase64,
+                        mimeType: "image/jpeg",
+                    }
+                }
+            ]
+        }
+    });
 
-    const result = await model.generateContent([
-        `Act as a professional photo editor. I will provide an image and a request. 
-         Since you cannot generate images directly, please describe exactly how you would edit this image to match the request: ${prompt}`,
-        {
-            inlineData: {
-                data: cleanBase64,
-                mimeType: "image/jpeg",
-            },
-        },
-    ]);
+    const generatedText = response.text;
 
-    const response = await result.response;
-    const text = response.text();
+    // 5. DEDUCT CREDITS (Only after success)
+    if (user) {
+        const { data: freshProfile } = await supabaseAdmin
+            .from('profiles')
+            .select('credits')
+            .eq('id', user.id)
+            .single();
 
-    console.log("AI Response (Text):", text);
-    
-    const generatedImage = cleanBase64; 
+        if (freshProfile && freshProfile.credits > 0) {
+            const { error: updateError } = await supabaseAdmin
+                .from('profiles')
+                .update({ credits: freshProfile.credits - 1 })
+                .eq('id', user.id);
+            
+            if (updateError) console.error("Failed to deduct credit:", updateError);
+        }
+    }
 
-    res.json({ success: true, image: generatedImage, message: text });
+    console.log("AI Generation Successful");
+
+    // 6. RETURN RESPONSE
+    const returnedImage = `data:image/jpeg;base64,${cleanBase64}`;
+
+    res.json({ success: true, image: returnedImage, message: generatedText });
 
   } catch (error) {
     console.error("Generation Error:", error);
-    // Refund credit on failure
-    if (user && profile) await supabaseAdmin.from('profiles').update({ credits: profile.credits }).eq('id', user.id);
+    // Note: We do NOT deduct credits here because the operation failed.
     res.status(500).json({ error: error.message || "Generation Failed" });
   }
 });
@@ -122,10 +164,12 @@ app.post('/api/verify-checkout', async (req, res) => {
 
         let creditsToAdd = 0;
         const amountTotal = session.amount_total; 
-        if (amountTotal === 399) creditsToAdd = 5;
-        else if (amountTotal === 999) creditsToAdd = 50;
-        else if (amountTotal === 1999) creditsToAdd = 100;
-        else if (amountTotal === 2999) creditsToAdd = 200;
+        
+        // Logic updated for new pricing model:
+        if (amountTotal === 399) creditsToAdd = 5;       // One-time
+        else if (amountTotal === 999) creditsToAdd = 25; // Basic ($9.99 -> 25 credits)
+        else if (amountTotal === 1999) creditsToAdd = 50;// Pro ($19.99 -> 50 credits)
+        else if (amountTotal === 3499) creditsToAdd = 100;// Elite ($34.99 -> 100 credits)
 
         const { data: currentProfile } = await supabaseAdmin.from('profiles').select('credits').eq('id', user.id).single();
         const currentCredits = currentProfile ? currentProfile.credits : 0;
