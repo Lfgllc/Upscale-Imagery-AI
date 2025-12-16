@@ -5,10 +5,9 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-// Using the new, recommended SDK
 import { GoogleGenAI } from '@google/genai';
 
-// CRITICAL FIX: Import shared client with .js extension
+// Import shared client
 import supabaseAdmin from './api/supabaseClient.js';
 
 dotenv.config();
@@ -64,8 +63,7 @@ app.post('/api/generate', async (req, res) => {
 
   // 1. Authenticate User
   const user = await getAuthenticatedUser(req);
-  let currentCredits = 0;
-
+  
   // Resolve API Key
   const API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
@@ -86,20 +84,19 @@ app.post('/api/generate', async (req, res) => {
             return res.status(404).json({ error: "User profile not found." });
         }
 
-        currentCredits = profile.credits;
-
-        if (currentCredits < 1) {
-            return res.status(403).json({ error: "Insufficient credits. Please upgrade or buy a pack to generate images." });
+        if (profile.credits < 1) {
+            return res.status(403).json({ error: "Insufficient credits. Please upgrade or buy a pack." });
         }
     }
 
-    // 3. PREPARE DATA
+    // 3. SANITIZE DATA
     const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-    const cleanBase64 = base64Data.replace(/\s/g, "");
+    const cleanBase64 = base64Data.replace(/[\s\r\n]+/g, "");
 
     // 4. CALL GEMINI
     const ai = new GoogleGenAI({ apiKey: API_KEY });
     
+    // Using 'gemini-2.5-flash'
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: {
@@ -107,7 +104,7 @@ app.post('/api/generate', async (req, res) => {
                 { 
                     text: `Act as a professional photo editor. The user wants to edit the attached image. 
                            Instruction: ${prompt}. 
-                           Describe the changes you would make in vivid detail as if you were returning the edited layer.` 
+                           Describe the changes you would make in vivid detail.` 
                 },
                 {
                     inlineData: {
@@ -148,7 +145,7 @@ app.post('/api/generate', async (req, res) => {
 
   } catch (error) {
     console.error("Generation Error:", error);
-    // Note: We do NOT deduct credits here because the operation failed.
+    // DO NOT deduct credits on failure
     res.status(500).json({ error: error.message || "Generation Failed" });
   }
 });
@@ -165,11 +162,10 @@ app.post('/api/verify-checkout', async (req, res) => {
         let creditsToAdd = 0;
         const amountTotal = session.amount_total; 
         
-        // Logic updated for new pricing model:
-        if (amountTotal === 399) creditsToAdd = 5;       // One-time
-        else if (amountTotal === 999) creditsToAdd = 25; // Basic ($9.99 -> 25 credits)
-        else if (amountTotal === 1999) creditsToAdd = 50;// Pro ($19.99 -> 50 credits)
-        else if (amountTotal === 3499) creditsToAdd = 100;// Elite ($34.99 -> 100 credits)
+        if (amountTotal === 399) creditsToAdd = 5;       
+        else if (amountTotal === 999) creditsToAdd = 25; 
+        else if (amountTotal === 1999) creditsToAdd = 50;
+        else if (amountTotal === 3499) creditsToAdd = 100;
 
         const { data: currentProfile } = await supabaseAdmin.from('profiles').select('credits').eq('id', user.id).single();
         const currentCredits = currentProfile ? currentProfile.credits : 0;

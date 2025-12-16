@@ -3,10 +3,9 @@ import express from 'express';
 import Stripe from 'stripe';
 import cors from 'cors';
 import dotenv from 'dotenv';
-// Using the new, recommended SDK
 import { GoogleGenAI } from '@google/genai';
 
-// CRITICAL FIX: Import with .js extension for ESM compatibility
+// CRITICAL: Import with .js extension for ESM compatibility in Vercel
 import supabaseAdmin from './supabaseClient.js';
 
 dotenv.config();
@@ -17,7 +16,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2023-10-16',
 });
 
-// Middleware
+// Middleware: High limit for image uploads
 app.use(express.json({ limit: '10mb' }));
 app.use(cors());
 
@@ -47,8 +46,7 @@ app.post('/api/generate', async (req, res) => {
 
   // 1. Authenticate User
   const user = await getAuthenticatedUser(req);
-  let currentCredits = 0;
-
+  
   // Resolve API Key
   const API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
@@ -58,7 +56,7 @@ app.post('/api/generate', async (req, res) => {
   }
 
   try {
-    // 2. CHECK CREDITS (Before generation)
+    // 2. CHECK CREDITS (Before calling Gemini)
     // We strictly block generation if credits are <= 0
     if (user) {
         const { data: profile } = await supabaseAdmin
@@ -71,23 +69,21 @@ app.post('/api/generate', async (req, res) => {
             return res.status(404).json({ error: "User profile not found." });
         }
 
-        currentCredits = profile.credits;
-
-        if (currentCredits < 1) {
+        if (profile.credits < 1) {
             return res.status(403).json({ error: "Insufficient credits. Please upgrade or buy a pack to generate images." });
         }
     }
 
-    // 3. PREPARE DATA (Sanitize)
-    // Remove Data URI prefix and whitespace to prevent "string did not match expected pattern"
+    // 3. SANITIZE DATA
+    // Remove Data URI prefix and whitespace to prevent DOMException in Gemini SDK
+    // The SDK expects raw base64 data for inlineData
     const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-    const cleanBase64 = base64Data.replace(/\s/g, "");
+    const cleanBase64 = base64Data.replace(/[\s\r\n]+/g, "");
 
-    // 4. CALL GEMINI (Generation Phase)
-    // We use the new GoogleGenAI SDK.
+    // 4. EXECUTE GEMINI GENERATION
     const ai = new GoogleGenAI({ apiKey: API_KEY });
     
-    // Using 'gemini-2.5-flash' as it is the current standard for multimodal speed/cost
+    // Using 'gemini-2.5-flash' for multimodal generation
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: {
@@ -95,23 +91,23 @@ app.post('/api/generate', async (req, res) => {
                 { 
                     text: `Act as a professional photo editor. The user wants to edit the attached image. 
                            Instruction: ${prompt}. 
-                           Describe the changes you would make in vivid detail as if you were returning the edited layer.` 
+                           Describe the visual changes you would make in high detail, as if you were describing the final edited image.` 
                 },
                 {
                     inlineData: {
                         data: cleanBase64,
-                        mimeType: "image/jpeg", // Assuming JPEG, SDK handles auto-detection often but explicit is safer
+                        mimeType: "image/jpeg",
                     }
                 }
             ]
         }
     });
 
-    // Extract text using the direct .text property from the new SDK
+    // Extract text from the new SDK response structure
     const generatedText = response.text; 
 
-    // 5. DEDUCT CREDITS (Only after success)
-    // This ensures we don't charge for failed API calls.
+    // 5. DEDUCT CREDITS (ONLY after successful execution)
+    // If the code reaches here, Gemini didn't throw an error.
     if (user) {
         // Fetch fresh credits to ensure we don't overwrite a concurrent transaction
         const { data: freshProfile } = await supabaseAdmin
@@ -128,7 +124,6 @@ app.post('/api/generate', async (req, res) => {
             
             if (updateError) {
                 console.error("Failed to deduct credit after success:", updateError);
-                // In a strict financial system, we might log this to a 'failed_charges' table
             }
         }
     }
@@ -136,14 +131,14 @@ app.post('/api/generate', async (req, res) => {
     console.log("AI Generation Successful");
 
     // 6. RETURN RESPONSE
-    // Return the original image (loopback) + the AI's description
+    // We loop back the cleaned base64 with the prefix so the frontend can display it
     const returnedImage = `data:image/jpeg;base64,${cleanBase64}`;
 
     res.json({ success: true, image: returnedImage, message: generatedText });
 
   } catch (error) {
     console.error("Generation Error:", error);
-    // Note: We do NOT deduct credits here because the operation failed.
+    // DO NOT deduct credits here. The user is not charged for failed requests.
     res.status(500).json({ error: error.message || "Generation Failed" });
   }
 });
@@ -158,13 +153,13 @@ app.post('/api/verify-checkout', async (req, res) => {
         if (session.payment_status !== 'paid') return res.status(400).json({ error: "Not paid" });
 
         let creditsToAdd = 0;
-        const amountTotal = session.amount_total; // Amount in cents
+        const amountTotal = session.amount_total; // Cents
         
-        // Logic updated for new pricing model:
+        // Pricing Logic
         if (amountTotal === 399) creditsToAdd = 5;       // One-time
-        else if (amountTotal === 999) creditsToAdd = 25; // Basic ($9.99 -> 25 credits)
-        else if (amountTotal === 1999) creditsToAdd = 50;// Pro ($19.99 -> 50 credits)
-        else if (amountTotal === 3499) creditsToAdd = 100;// Elite ($34.99 -> 100 credits)
+        else if (amountTotal === 999) creditsToAdd = 25; // Basic
+        else if (amountTotal === 1999) creditsToAdd = 50;// Pro
+        else if (amountTotal === 3499) creditsToAdd = 100;// Elite
 
         const { data: currentProfile } = await supabaseAdmin.from('profiles').select('credits').eq('id', user.id).single();
         const currentCredits = currentProfile ? currentProfile.credits : 0;
