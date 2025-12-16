@@ -1,19 +1,15 @@
 // BACKEND SERVER FOR UPSCALE IMAGERY AI
-import express from 'express';
-import Stripe from 'stripe';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { GoogleGenAI } from '@google/genai';
+const express = require('express');
+const Stripe = require('stripe');
+const cors = require('cors');
+const dotenv = require('dotenv');
+const path = require('path');
+const { GoogleGenAI } = require('@google/genai');
 
-// Import shared client
-import supabaseAdmin from './api/supabaseClient.js';
+// Import shared client (CommonJS)
+const supabaseAdmin = require('./api/supabaseClient.js');
 
 dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -54,98 +50,58 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date() });
 });
 
+// Import the logic from api/index.js if needed, or re-implement for local server consistency
+// Here we re-implement the route handlers to match api/index.js for local testing
+
 app.post('/api/generate', async (req, res) => {
   const { imageBase64, prompt } = req.body;
   
-  if (!imageBase64) {
-    return res.status(400).json({ error: "No image provided" });
-  }
+  if (!imageBase64) return res.status(400).json({ error: "No image provided" });
 
-  // 1. Authenticate User
   const user = await getAuthenticatedUser(req);
-  
-  // Resolve API Key
   const API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
-  if (!API_KEY) {
-    return res.status(500).json({ error: "Server GEMINI_API_KEY missing" });
-  }
+  if (!API_KEY) return res.status(500).json({ error: "Server GEMINI_API_KEY missing" });
 
   try {
-    // 2. CHECK CREDITS (Before generation)
     if (user) {
-        const { data: profile } = await supabaseAdmin
-            .from('profiles')
-            .select('credits')
-            .eq('id', user.id)
-            .single();
-
-        if (!profile) {
-            return res.status(404).json({ error: "User profile not found." });
-        }
-
-        if (profile.credits < 1) {
-            return res.status(403).json({ error: "Insufficient credits. Please upgrade or buy a pack." });
-        }
+        const { data: profile } = await supabaseAdmin.from('profiles').select('credits').eq('id', user.id).single();
+        if (!profile) return res.status(404).json({ error: "User profile not found." });
+        if (profile.credits < 1) return res.status(403).json({ error: "Insufficient credits." });
     }
 
-    // 3. SANITIZE DATA
     const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-    const cleanBase64 = base64Data.replace(/[\s\r\n]+/g, "");
+    
+    if (base64Data.length < 100) return res.status(400).json({ error: "Image too small." });
 
-    // 4. CALL GEMINI
     const ai = new GoogleGenAI({ apiKey: API_KEY });
     
-    // Using 'gemini-2.5-flash'
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: {
             parts: [
-                { 
-                    text: `Act as a professional photo editor. The user wants to edit the attached image. 
-                           Instruction: ${prompt}. 
-                           Describe the changes you would make in vivid detail.` 
-                },
-                {
-                    inlineData: {
-                        data: cleanBase64,
-                        mimeType: "image/jpeg",
-                    }
-                }
+                { text: `Act as a professional photo editor. Instruction: ${prompt}. Describe changes in vivid detail.` },
+                { inlineData: { data: base64Data, mimeType: "image/jpeg" } }
             ]
         }
     });
 
+    if (!response || !response.text) throw new Error("Empty AI response");
+
     const generatedText = response.text;
 
-    // 5. DEDUCT CREDITS (Only after success)
     if (user) {
-        const { data: freshProfile } = await supabaseAdmin
-            .from('profiles')
-            .select('credits')
-            .eq('id', user.id)
-            .single();
-
+        const { data: freshProfile } = await supabaseAdmin.from('profiles').select('credits').eq('id', user.id).single();
         if (freshProfile && freshProfile.credits > 0) {
-            const { error: updateError } = await supabaseAdmin
-                .from('profiles')
-                .update({ credits: freshProfile.credits - 1 })
-                .eq('id', user.id);
-            
-            if (updateError) console.error("Failed to deduct credit:", updateError);
+            await supabaseAdmin.from('profiles').update({ credits: freshProfile.credits - 1 }).eq('id', user.id);
         }
     }
 
-    console.log("AI Generation Successful");
-
-    // 6. RETURN RESPONSE
-    const returnedImage = `data:image/jpeg;base64,${cleanBase64}`;
-
+    const returnedImage = `data:image/jpeg;base64,${base64Data}`;
     res.json({ success: true, image: returnedImage, message: generatedText });
 
   } catch (error) {
-    console.error("Generation Error:", error);
-    // DO NOT deduct credits on failure
+    console.error("Local Server Error:", error);
     res.status(500).json({ error: error.message || "Generation Failed" });
   }
 });

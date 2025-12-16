@@ -1,5 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
+const { createClient } = require('@supabase/supabase-js');
+const dotenv = require('dotenv');
 
 // Load environment variables if running locally
 dotenv.config();
@@ -18,4 +18,4 @@ if (!SUPABASE_SERVICE_KEY) {
 // Note: We use the service role key for the backend to bypass RLS where necessary
 const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY || '');
 
-export default supabaseAdmin;
+module.exports = supabaseAdmin;

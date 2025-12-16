@@ -1,12 +1,12 @@
 // VERCEL SERVERLESS FUNCTION ENTRY POINT
-import express from 'express';
-import Stripe from 'stripe';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai';
+const express = require('express');
+const Stripe = require('stripe');
+const cors = require('cors');
+const dotenv = require('dotenv');
+const { GoogleGenAI } = require('@google/genai');
 
-// CRITICAL: Import with .js extension for ESM compatibility in Vercel environment
-import supabaseAdmin from './supabaseClient.js';
+// Import Supabase Admin client (CommonJS)
+const supabaseAdmin = require('./supabaseClient.js');
 
 dotenv.config();
 
@@ -43,7 +43,6 @@ app.post('/api/generate', async (req, res) => {
       const { imageBase64, prompt } = req.body;
       
       // 1. VALIDATION: API Key Existence
-      // We check this FIRST to fail fast if server is misconfigured
       const API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
       if (!API_KEY) {
           console.error("CRITICAL ERROR: API Key is missing in server environment variables.");
@@ -83,10 +82,8 @@ app.post('/api/generate', async (req, res) => {
       }
 
       // 4. SANITIZATION
-      // Strip data URI prefix if present
       const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
       
-      // Validate sanitized data length (approx check for empty/tiny files)
       if (base64Data.length < 100) {
           return res.status(400).json({ error: "Image file is too small or corrupted." });
       }
@@ -118,7 +115,6 @@ app.post('/api/generate', async (req, res) => {
               }
           });
 
-          // Check if response exists and has text
           if (!response || !response.text) {
               console.error("Gemini response was empty or missing text.");
               throw new Error("AI returned an empty response. The prompt might have triggered a safety filter.");
@@ -132,7 +128,6 @@ app.post('/api/generate', async (req, res) => {
           const msg = (geminiError.message || "").toLowerCase();
           const status = geminiError.status || 500;
 
-          // Specific Error Mapping for User Feedback
           if (status === 400 || msg.includes("invalid_argument")) {
                return res.status(400).json({ error: "The AI rejected the image. It may be a format we can't process." });
           }
@@ -149,11 +144,10 @@ app.post('/api/generate', async (req, res) => {
                return res.status(400).json({ error: "The request was blocked by safety filters. Please try a different image or prompt." });
           }
 
-          // Unknown Gemini error
           throw new Error(`AI Service Error: ${geminiError.message}`);
       }
 
-      // 6. DEDUCT CREDITS (Only after successful execution)
+      // 6. DEDUCT CREDITS
       if (user) {
           const { data: freshProfile } = await supabaseAdmin
               .from('profiles')
@@ -180,7 +174,6 @@ app.post('/api/generate', async (req, res) => {
   } catch (serverError) {
     console.error("General Server Error:", serverError);
     
-    // Explicitly catch Payload Too Large (Express/Vercel)
     if (serverError.type === 'entity.too.large' || (serverError.message && serverError.message.includes('too large'))) {
         return res.status(413).json({ error: "The image is too large. Please upload a file smaller than 4.5MB." });
     }
@@ -218,4 +211,4 @@ app.post('/api/verify-checkout', async (req, res) => {
     }
 });
 
-export default app;
+module.exports = app;
