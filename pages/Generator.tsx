@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { StorageService } from '../services/storageService';
 import { GeminiService } from '../services/geminiService';
 import { User, ImageRecord, PlanTier, PLANS } from '../types';
-import heic2any from 'heic2any';
 
 export const Generator: React.FC = () => {
   const navigate = useNavigate();
@@ -23,27 +22,11 @@ export const Generator: React.FC = () => {
 
   // --- CLIENT-SIDE IMAGE PROCESSING ---
   const processImage = async (file: File): Promise<string> => {
-    // 1. Handle HEIC/HEIF Conversion
-    let sourceFile = file;
-    if (file.type === 'image/heic' || file.name.toLowerCase().endsWith('.heic')) {
-      try {
-        console.log("Detected HEIC, converting...");
-        const convertedBlob = await heic2any({
-          blob: file,
-          toType: 'image/jpeg',
-          quality: 0.7
-        });
-        const blobToUse = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
-        sourceFile = new File([blobToUse], file.name.replace(/\.heic$/i, '.jpg'), { type: 'image/jpeg' });
-      } catch (e) {
-        console.warn('HEIC conversion failed, attempting standard load', e);
-      }
-    }
-
+    // 1. Skip HEIC conversion, rely on browser support for JPG/PNG/WEBP
     return new Promise((resolve, reject) => {
       // 2. Read the file
       const reader = new FileReader();
-      reader.readAsDataURL(sourceFile);
+      reader.readAsDataURL(file);
       
       reader.onload = (event) => {
         const img = new Image();
@@ -123,7 +106,7 @@ export const Generator: React.FC = () => {
         setPreviewUrl(optimizedBase64);
       } catch (err: any) {
         console.error("Image processing error:", err);
-        setError(err.message || "Failed to process image. Please try a valid JPEG, PNG, or HEIC file.");
+        setError(err.message || "Failed to process image. Please try a valid JPEG or PNG file.");
       } finally {
         setIsProcessing(false);
       }
@@ -245,7 +228,7 @@ export const Generator: React.FC = () => {
                 type="file" 
                 ref={fileInputRef} 
                 className="hidden" 
-                accept="image/jpeg, image/png, image/webp, image/heic" 
+                accept="image/jpeg, image/png, image/webp" 
                 onChange={handleFileChange}
               />
               
@@ -265,7 +248,7 @@ export const Generator: React.FC = () => {
                     <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                   <p className="text-sm text-slate-600">Click to upload or drag and drop</p>
-                  <p className="text-xs text-slate-500">JPG, PNG, HEIC (Auto-optimized)</p>
+                  <p className="text-xs text-slate-500">JPG, PNG (Auto-optimized)</p>
                 </div>
               )}
             </div>
