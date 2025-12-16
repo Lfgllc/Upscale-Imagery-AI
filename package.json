@@ -18,7 +18,9 @@
     "express": "^5.2.1",
     "stripe": "^20.0.0",
     "path": "^0.12.7",
-    "url": "^0.11.4"
+    "url": "^0.11.4",
+    "nodemailer": "^7.0.11",
+    "@supabase/supabase-js": "2.39.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

@@ -42,11 +42,11 @@ export const Generator: React.FC = () => {
       return;
     }
 
-    // --- LOGIC: Free vs Paid ---
+    // --- PRE-CHECK: Free vs Paid ---
+    // Note: The server performs the hard check. This is just for UI feedback.
     let isFreePreview = false;
 
     if (user.credits <= 0 && user.plan === PlanTier.NONE) {
-        // User has no credits. Check if they have a free trial left.
         if (!user.hasUsedFreeGen) {
             isFreePreview = true;
         } else {
@@ -63,55 +63,51 @@ export const Generator: React.FC = () => {
     setIsGenerating(true);
     setError(null);
 
-    // Rate Limiting Check (Mock)
-    const lastGenTime = localStorage.getItem('last_gen_time');
-    if (lastGenTime && Date.now() - parseInt(lastGenTime) < 10000) {
-        setError("Please wait a few seconds before generating again.");
-        setIsGenerating(false);
-        return;
-    }
-    localStorage.setItem('last_gen_time', Date.now().toString());
-
-
     try {
+      // 1. CALL SERVER (Server deducts credit automatically)
       const resultBase64 = await GeminiService.transformImage(previewUrl, prompt);
       
       setGeneratedImage(resultBase64);
       StorageService.logEvent({ type: 'GENERATION_SUCCESS', timestamp: Date.now() });
       
-      // Save record locally
-      const newRecord: ImageRecord = {
+      // 2. SYNC STATE
+      // We immediately re-fetch the user profile from Supabase to get the updated credit count
+      // because the server just deducted it.
+      const updatedUser = await StorageService.syncUser();
+      setUser(updatedUser);
+
+      // 3. SAVE IMAGE RECORD
+      // Start with a local temp record
+      const tempRecord: ImageRecord = {
         id: Date.now().toString(),
         userId: user.isAuthenticated ? user.id : 'guest',
         originalImageBase64: previewUrl,
         generatedImageBase64: resultBase64,
         prompt: prompt,
         timestamp: Date.now(),
-        isUnlocked: false, // Default locked
+        // If they had credits (and thus server succeeded), it's unlocked.
+        // If it was a free preview logic (client side override), we keep it locked/watermarked until they pay.
+        isUnlocked: !isFreePreview, 
         isFreePreview: isFreePreview
       };
 
-      StorageService.saveImage(newRecord);
-      setCurrentImageId(newRecord.id);
+      const savedRecord = await StorageService.saveImage(tempRecord);
+      setCurrentImageId(savedRecord.id);
 
       if (isFreePreview) {
-          // Mark free trial as used
-          const updatedUser = StorageService.recordFreeUsage();
-          setUser(updatedUser);
-      } else {
-          // Paid user with credits: Deduct and unlock immediately
-          if (user.credits > 0) {
-            if (StorageService.deductCredit()) {
-               StorageService.updateImage(newRecord.id, { isUnlocked: true });
-               setUser(StorageService.getUser()); 
-               // Force unlocked state for UI right now
-               newRecord.isUnlocked = true;
-            }
-          }
+          // If this was the "Free Preview", mark it used locally
+          const u = StorageService.recordFreeUsage();
+          setUser(u);
       }
 
     } catch (err: any) {
       setError(err.message || "Transformation failed. Please try a different prompt.");
+      
+      // Handle "Insufficient Credits" specifically
+      if (err.message.includes("Insufficient credits")) {
+          setShowPaymentModal(true);
+      }
+      
       StorageService.logEvent({ type: 'GENERATION_FAILURE', timestamp: Date.now(), details: err.message });
     } finally {
       setIsGenerating(false);
@@ -126,15 +122,8 @@ export const Generator: React.FC = () => {
     if (!currentImageId) return;
 
     const plan = PLANS.find(p => p.id === PlanTier.NONE);
-    if (!plan) return;
+    if (!plan || !plan.paymentLink) return;
 
-    if (!plan.paymentLink || plan.paymentLink.includes('PASTE_YOUR')) {
-        alert("Configuration Error: The payment link has not been set up in types.ts yet.");
-        return;
-    }
-
-    // Redirect to Stripe (Simulated with local redirect)
-    // We pass both the Plan (NONE = One-time) and the Image ID so we can unlock it upon success
     StorageService.setPendingTransaction(PlanTier.NONE, currentImageId);
     window.location.href = plan.paymentLink;
   };
@@ -146,7 +135,6 @@ export const Generator: React.FC = () => {
 
   const currentRecord = getCurrentRecord();
   const isUnlocked = currentRecord?.isUnlocked || false;
-  // Free preview logic specific to current view
   const isFreePreviewMode = currentRecord?.isFreePreview && !isUnlocked;
 
   return (
