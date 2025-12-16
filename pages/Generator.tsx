@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { StorageService } from '../services/storageService';
 import { GeminiService } from '../services/geminiService';
 import { User, ImageRecord, PlanTier, PLANS } from '../types';
-import heic2any from 'heic2any';
 
 export const Generator: React.FC = () => {
   const navigate = useNavigate();
@@ -22,35 +21,18 @@ export const Generator: React.FC = () => {
   const [currentImageId, setCurrentImageId] = useState<string | null>(null);
 
   // --- CLIENT-SIDE IMAGE PROCESSING ---
-  const processImage = async (file: File): Promise<string> => {
-    // 1. Handle HEIC/HEIF Conversion
-    let sourceFile = file;
-    if (file.type === 'image/heic' || file.name.toLowerCase().endsWith('.heic')) {
-      try {
-        const convertedBlob = await heic2any({
-          blob: file,
-          toType: 'image/jpeg',
-          quality: 0.8
-        });
-        const blobToUse = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
-        sourceFile = new File([blobToUse], file.name.replace(/\.heic$/i, '.jpg'), { type: 'image/jpeg' });
-      } catch (e) {
-        console.warn('HEIC conversion failed, attempting legacy upload', e);
-      }
-    }
-
+  const processImage = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
-      // 2. Read the file
+      // 1. Read the file
       const reader = new FileReader();
-      reader.readAsDataURL(sourceFile);
+      reader.readAsDataURL(file);
       
       reader.onload = (event) => {
         const img = new Image();
         img.src = event.target?.result as string;
         
         img.onload = () => {
-          // 3. Calculate new dimensions (Max 1024x1024)
-          // This ensures the Payload is < 4.5MB (Vercel Limit)
+          // 2. Calculate new dimensions (Max 1024x1024)
           const MAX_WIDTH = 1024;
           const MAX_HEIGHT = 1024;
           let width = img.width;
@@ -68,7 +50,7 @@ export const Generator: React.FC = () => {
             }
           }
 
-          // 4. Create Canvas and Draw
+          // 3. Create Canvas and Draw
           const canvas = document.createElement('canvas');
           canvas.width = width;
           canvas.height = height;
@@ -84,7 +66,7 @@ export const Generator: React.FC = () => {
           ctx.fillRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
           
-          // 5. Export compressed JPEG (0.8 quality)
+          // 4. Export compressed JPEG (0.8 quality)
           // This dramatically reduces file size while keeping visual quality high for AI
           const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
           resolve(dataUrl);
@@ -118,7 +100,7 @@ export const Generator: React.FC = () => {
         setPreviewUrl(optimizedBase64);
       } catch (err: any) {
         console.error("Image processing error:", err);
-        setError("Failed to process image. Please try a valid JPEG, PNG, or HEIC file.");
+        setError("Failed to process image. Please try a valid JPEG or PNG file.");
       } finally {
         setIsProcessing(false);
       }
@@ -240,7 +222,7 @@ export const Generator: React.FC = () => {
                 type="file" 
                 ref={fileInputRef} 
                 className="hidden" 
-                accept="image/jpeg, image/png, image/webp, image/heic" 
+                accept="image/jpeg, image/png, image/webp" 
                 onChange={handleFileChange}
               />
               
@@ -260,7 +242,7 @@ export const Generator: React.FC = () => {
                     <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                   <p className="text-sm text-slate-600">Click to upload or drag and drop</p>
-                  <p className="text-xs text-slate-500">JPG, PNG, HEIC (Auto-optimized)</p>
+                  <p className="text-xs text-slate-500">JPG, PNG (Auto-optimized)</p>
                 </div>
               )}
             </div>

@@ -84,108 +84,86 @@ app.post('/api/generate', async (req, res) => {
         const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
         const inputBuffer = Buffer.from(base64Data, 'base64');
 
-        // VALIDATE IMAGE FORMAT
-        const metadata = await sharp(inputBuffer).metadata();
-        // Accepted formats: jpeg, png, webp (Gemini supports these)
-        const allowedFormats = ['jpeg', 'png', 'webp'];
-        if (!allowedFormats.includes(metadata.format)) {
-            return res.status(400).json({ error: `Unsupported format (${metadata.format}). Please upload JPEG or PNG.` });
-        }
-
         // Resize to max 1024x1024 (fit: inside) and convert to JPEG (quality: 80)
-        // This is a safety net even if client-side resizing fails or is bypassed.
         const processedBuffer = await sharp(inputBuffer)
             .resize(1024, 1024, { 
                 fit: 'inside', 
-                withoutEnlargement: true 
+                withoutEnlargement: true // Don't upscale small images
             })
             .jpeg({ 
                 quality: 80, 
-                mozjpeg: true 
+                mozjpeg: true // Better compression
             })
             .toBuffer();
         
         optimizedBase64 = processedBuffer.toString('base64');
     } catch (imgError) {
         console.error("Image Processing Failed:", imgError);
-        return res.status(400).json({ error: "Invalid image data. Please upload a valid PNG or JPEG image." });
+        return res.status(400).json({ error: "Invalid image format. Please upload a valid PNG or JPEG image." });
     }
 
     // 4. EXECUTE GEMINI GENERATION
-    try {
-        const ai = new GoogleGenAI({ apiKey: API_KEY });
-        
-        // Using 'gemini-2.5-flash' for basic image editing/generation tasks
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: {
-                parts: [
-                    { 
-                        text: `Act as a professional photo editor. The user wants to edit the attached image. 
-                               Instruction: ${prompt}. 
-                               Describe the visual changes you would make in high detail, as if you were describing the final edited image.` 
-                    },
-                    {
-                        inlineData: {
-                            data: optimizedBase64,
-                            mimeType: "image/jpeg",
-                        }
+    const ai = new GoogleGenAI({ apiKey: API_KEY });
+    
+    // Using 'gemini-2.5-flash' for basic image editing/generation tasks
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: {
+            parts: [
+                { 
+                    text: `Act as a professional photo editor. The user wants to edit the attached image. 
+                           Instruction: ${prompt}. 
+                           Describe the visual changes you would make in high detail, as if you were describing the final edited image.` 
+                },
+                {
+                    inlineData: {
+                        data: optimizedBase64,
+                        mimeType: "image/jpeg",
                     }
-                ]
-            }
-        });
-
-        // Extract text from the SDK response
-        const generatedText = response.text; 
-
-        // 5. DEDUCT CREDITS (Only after successful execution)
-        if (user) {
-            // Fetch fresh credits to ensure concurrency safety
-            const { data: freshProfile } = await supabaseAdmin
-                .from('profiles')
-                .select('credits')
-                .eq('id', user.id)
-                .single();
-
-            if (freshProfile && freshProfile.credits > 0) {
-                const { error: updateError } = await supabaseAdmin
-                    .from('profiles')
-                    .update({ credits: freshProfile.credits - 1 })
-                    .eq('id', user.id);
-                
-                if (updateError) {
-                    console.error("Failed to deduct credit after success:", updateError);
                 }
+            ]
+        }
+    });
+
+    // Extract text from the SDK response
+    const generatedText = response.text; 
+
+    // 5. DEDUCT CREDITS (Only after successful execution)
+    if (user) {
+        // Fetch fresh credits to ensure concurrency safety
+        const { data: freshProfile } = await supabaseAdmin
+            .from('profiles')
+            .select('credits')
+            .eq('id', user.id)
+            .single();
+
+        if (freshProfile && freshProfile.credits > 0) {
+            const { error: updateError } = await supabaseAdmin
+                .from('profiles')
+                .update({ credits: freshProfile.credits - 1 })
+                .eq('id', user.id);
+            
+            if (updateError) {
+                console.error("Failed to deduct credit after success:", updateError);
             }
         }
-
-        console.log("AI Generation Successful");
-
-        // 6. RETURN RESPONSE
-        const returnedImage = `data:image/jpeg;base64,${optimizedBase64}`;
-        res.json({ success: true, image: returnedImage, message: generatedText });
-
-    } catch (apiError) {
-        console.error("Gemini API Error:", apiError);
-        // Provide user-friendly error messages based on status
-        if (apiError.status === 503) {
-            throw new Error("AI service is currently busy. Please try again in a few seconds.");
-        } else if (apiError.status === 400) {
-             throw new Error("The AI rejected the request. The image might be unclear or violates safety policies.");
-        }
-        throw apiError; // Re-throw to be caught by outer catch
     }
 
-  } catch (error) {
-    console.error("Route Error:", error);
-    // User-friendly error mapping
-    let errorMessage = "Generation Failed. Please try again.";
-    
-    if (error.message?.includes('413')) errorMessage = "Image is too large for the AI model.";
-    else if (error.message?.includes('Safety')) errorMessage = "Request blocked by safety filters.";
-    else if (error.message?.includes('busy')) errorMessage = "AI Service is temporarily busy. Please try again.";
-    else if (error.message) errorMessage = error.message;
+    console.log("AI Generation Successful");
 
+    // 6. RETURN RESPONSE
+    // Return the optimized image so the client displays exactly what was processed
+    const returnedImage = `data:image/jpeg;base64,${optimizedBase64}`;
+
+    res.json({ success: true, image: returnedImage, message: generatedText });
+
+  } catch (error) {
+    console.error("Generation Error:", error);
+    // User-friendly error mapping
+    let errorMessage = "Generation Failed";
+    if (error.message?.includes('413')) errorMessage = "Image is too large for the AI model.";
+    else if (error.message?.includes('503')) errorMessage = "AI Service is temporarily busy. Please try again.";
+    
     // DO NOT deduct credits here. 
     res.status(500).json({ error: errorMessage });
   }
