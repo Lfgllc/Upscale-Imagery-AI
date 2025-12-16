@@ -12,6 +12,7 @@ dotenv.config();
 
 const app = express();
 
+// Initialize Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2023-10-16',
 });
@@ -81,7 +82,7 @@ app.post('/api/generate', async (req, res) => {
     // 4. EXECUTE GEMINI GENERATION
     const ai = new GoogleGenAI({ apiKey: API_KEY });
     
-    // Using 'gemini-2.5-flash'
+    // Using 'gemini-2.5-flash' for basic image editing/generation tasks
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: {
@@ -101,11 +102,10 @@ app.post('/api/generate', async (req, res) => {
         }
     });
 
-    // Extract text from the new SDK response structure
+    // Extract text from the SDK response
     const generatedText = response.text; 
 
     // 5. DEDUCT CREDITS (Only after successful execution)
-    // If the code reaches here, Gemini execution was successful.
     if (user) {
         // Fetch fresh credits to ensure concurrency safety
         const { data: freshProfile } = await supabaseAdmin
@@ -129,7 +129,9 @@ app.post('/api/generate', async (req, res) => {
     console.log("AI Generation Successful");
 
     // 6. RETURN RESPONSE
-    // Return original image as 'result' + text description
+    // For this specific logic flow, we are returning the original image (as per previous logic) 
+    // or you would integrate 'imagen' if doing actual pixel generation. 
+    // Assuming text-based description or placeholder for this specific snippet.
     const returnedImage = `data:image/jpeg;base64,${cleanBase64}`;
 
     res.json({ success: true, image: returnedImage, message: generatedText });
