@@ -5,10 +5,10 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const { GoogleGenAI } = require('@google/genai');
 
+dotenv.config();
+
 // Import Supabase Admin client (CommonJS)
 const supabaseAdmin = require('./supabaseClient.js');
-
-dotenv.config();
 
 const app = express();
 
@@ -42,9 +42,13 @@ app.post('/api/generate', async (req, res) => {
   try {
       const { imageBase64, prompt } = req.body;
       
-      // 1. VALIDATION: API Key Existence
-      const API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-      if (!API_KEY) {
+      // 1. VALIDATION: API Key Normalization
+      if (!process.env.API_KEY) {
+          if (process.env.GEMINI_API_KEY) process.env.API_KEY = process.env.GEMINI_API_KEY;
+          else if (process.env.GOOGLE_API_KEY) process.env.API_KEY = process.env.GOOGLE_API_KEY;
+      }
+
+      if (!process.env.API_KEY) {
           console.error("CRITICAL ERROR: API Key is missing in server environment variables.");
           return res.status(500).json({ 
               error: "Server configuration error: AI API Key is missing. Please contact support." 
@@ -93,7 +97,8 @@ app.post('/api/generate', async (req, res) => {
       let generatedText = "";
       
       try {
-          const ai = new GoogleGenAI({ apiKey: API_KEY });
+          // Use process.env.API_KEY directly as per SDK guidelines
+          const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
           
           console.log(`Sending request to Gemini... Payload size: ${Math.round(base64Data.length / 1024)}KB`);
           
@@ -118,9 +123,11 @@ app.post('/api/generate', async (req, res) => {
              });
           } catch (primaryError) {
              console.warn(`Primary model failed (${primaryError.status || 'unknown'}), attempting fallback...`);
-             console.error("Primary Error Details:", JSON.stringify(primaryError, Object.getOwnPropertyNames(primaryError)));
+             if (primaryError.response) {
+                 console.error("Primary Error Body:", JSON.stringify(primaryError.response, null, 2));
+             }
              
-             // Fallback to experimental flash model which is often more permissive/available
+             // Fallback to experimental flash model
              response = await ai.models.generateContent({
                 model: 'gemini-2.0-flash-exp', 
                 contents: [{ role: 'user', parts: parts }]
@@ -153,7 +160,7 @@ app.post('/api/generate', async (req, res) => {
                return res.status(400).json({ error: "The AI could not process this image. It may be too complex or the format is unsupported." });
           }
           if (status === 403 || msg.includes("permission_denied")) {
-               return res.status(500).json({ error: "Server authentication with AI provider failed." });
+               return res.status(500).json({ error: "Server authentication with AI provider failed. Check API Key permissions." });
           }
           if (status === 429 || msg.includes("resource_exhausted")) {
                return res.status(503).json({ error: "AI System is currently overloaded. Please try again in 1 minute." });

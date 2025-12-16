@@ -6,10 +6,10 @@ const dotenv = require('dotenv');
 const path = require('path');
 const { GoogleGenAI } = require('@google/genai');
 
+dotenv.config();
+
 // Import shared client (CommonJS)
 const supabaseAdmin = require('./api/supabaseClient.js');
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -56,9 +56,14 @@ app.post('/api/generate', async (req, res) => {
   if (!imageBase64) return res.status(400).json({ error: "No image provided" });
 
   const user = await getAuthenticatedUser(req);
-  const API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  
+  // Normalize API Key
+  if (!process.env.API_KEY) {
+      if (process.env.GEMINI_API_KEY) process.env.API_KEY = process.env.GEMINI_API_KEY;
+      else if (process.env.GOOGLE_API_KEY) process.env.API_KEY = process.env.GOOGLE_API_KEY;
+  }
 
-  if (!API_KEY) return res.status(500).json({ error: "Server GEMINI_API_KEY missing" });
+  if (!process.env.API_KEY) return res.status(500).json({ error: "Server API Configuration missing (API_KEY)" });
 
   try {
     if (user) {
@@ -71,7 +76,8 @@ app.post('/api/generate', async (req, res) => {
     
     if (base64Data.length < 100) return res.status(400).json({ error: "Image too small." });
 
-    const ai = new GoogleGenAI({ apiKey: API_KEY });
+    // Use process.env.API_KEY directly
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
     console.log("Processing Generation...");
     
