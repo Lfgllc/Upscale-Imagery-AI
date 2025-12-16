@@ -42,25 +42,30 @@ app.post('/api/generate', async (req, res) => {
   try {
       const { imageBase64, prompt } = req.body;
       
-      // 1. VALIDATION: Basic Payload
+      // 1. VALIDATION: API Key Existence
+      // We check this FIRST to fail fast if server is misconfigured
+      const API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+      if (!API_KEY) {
+          console.error("CRITICAL ERROR: API Key is missing in server environment variables.");
+          return res.status(500).json({ 
+              error: "Server configuration error: AI API Key is missing. Please contact support." 
+          });
+      }
+
+      // 2. VALIDATION: Payload Data
       if (!imageBase64) {
-        return res.status(400).json({ error: "No image provided." });
+        return res.status(400).json({ error: "No image data provided." });
+      }
+      if (typeof imageBase64 !== 'string') {
+          return res.status(400).json({ error: "Invalid image format. Expected base64 string." });
       }
       if (!prompt) {
         return res.status(400).json({ error: "No prompt provided." });
       }
 
-      // 2. VALIDATION: API Key
-      const API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-      if (!API_KEY) {
-          console.error("CRITICAL: API Key is missing from server environment.");
-          return res.status(500).json({ error: "Service configuration error. Please contact support." });
-      }
-
-      // 3. AUTHENTICATION (Keep existing logic)
+      // 3. AUTHENTICATION & CREDIT CHECK
       const user = await getAuthenticatedUser(req);
       
-      // 4. CHECK CREDITS
       if (user) {
           const { data: profile } = await supabaseAdmin
               .from('profiles')
@@ -77,21 +82,22 @@ app.post('/api/generate', async (req, res) => {
           }
       }
 
-      // 5. SANITIZE & VALIDATE IMAGE DATA
-      // Remove data URI prefix if present
+      // 4. SANITIZATION
+      // Strip data URI prefix if present
       const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
       
-      // Basic check for empty or corrupted strings
-      if (!base64Data || base64Data.length < 100) {
-          return res.status(400).json({ error: "Invalid image data. The file may be corrupted." });
+      // Validate sanitized data length (approx check for empty/tiny files)
+      if (base64Data.length < 100) {
+          return res.status(400).json({ error: "Image file is too small or corrupted." });
       }
 
-      // 6. EXECUTE GEMINI GENERATION
+      // 5. EXECUTE GEMINI GENERATION
       let generatedText = "";
       
       try {
           const ai = new GoogleGenAI({ apiKey: API_KEY });
           
+          console.log("Sending request to Gemini...");
           const response = await ai.models.generateContent({
               model: 'gemini-2.5-flash',
               contents: {
@@ -112,42 +118,42 @@ app.post('/api/generate', async (req, res) => {
               }
           });
 
-          // Validation: Check if response has text
+          // Check if response exists and has text
           if (!response || !response.text) {
-              throw new Error("AI returned an empty response.");
+              console.error("Gemini response was empty or missing text.");
+              throw new Error("AI returned an empty response. The prompt might have triggered a safety filter.");
           }
 
           generatedText = response.text;
 
       } catch (geminiError) {
-          console.error("Gemini API Error Details:", JSON.stringify(geminiError, null, 2));
+          console.error("Gemini API Error:", JSON.stringify(geminiError, null, 2));
 
-          // Map Gemini specific errors to user-friendly messages
-          const msg = geminiError.message || "";
-          
-          if (msg.includes("400") || msg.includes("INVALID_ARGUMENT")) {
-               return res.status(400).json({ error: "The AI could not process this image. It may be too complex or in an unsupported format." });
+          const msg = (geminiError.message || "").toLowerCase();
+          const status = geminiError.status || 500;
+
+          // Specific Error Mapping for User Feedback
+          if (status === 400 || msg.includes("invalid_argument")) {
+               return res.status(400).json({ error: "The AI rejected the image. It may be a format we can't process." });
           }
-          if (msg.includes("403") || msg.includes("PERMISSION_DENIED")) {
-               return res.status(500).json({ error: "AI Service authentication failed." });
+          if (status === 403 || msg.includes("permission_denied")) {
+               return res.status(500).json({ error: "Server authentication with AI provider failed." });
           }
-          if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) {
-               return res.status(503).json({ error: "System is currently at capacity. Please try again in a minute." });
+          if (status === 429 || msg.includes("resource_exhausted")) {
+               return res.status(503).json({ error: "AI System is currently overloaded. Please try again in 1 minute." });
           }
-          if (msg.includes("500") || msg.includes("INTERNAL")) {
-               return res.status(502).json({ error: "AI Service experienced an internal error. Please try again." });
-          }
-          if (msg.includes("503") || msg.includes("UNAVAILABLE")) {
+          if (status === 503 || msg.includes("unavailable")) {
                return res.status(503).json({ error: "AI Service is temporarily unavailable. Please try again." });
           }
-          if (msg.includes("SAFETY") || msg.includes("BLOCKED")) {
-               return res.status(400).json({ error: "The request was blocked by safety filters. Please modify your image or prompt." });
+          if (msg.includes("safety") || msg.includes("blocked")) {
+               return res.status(400).json({ error: "The request was blocked by safety filters. Please try a different image or prompt." });
           }
 
-          throw geminiError; // Re-throw unhandled errors to the outer catch
+          // Unknown Gemini error
+          throw new Error(`AI Service Error: ${geminiError.message}`);
       }
 
-      // 7. DEDUCT CREDITS (Only after successful execution)
+      // 6. DEDUCT CREDITS (Only after successful execution)
       if (user) {
           const { data: freshProfile } = await supabaseAdmin
               .from('profiles')
@@ -161,29 +167,26 @@ app.post('/api/generate', async (req, res) => {
                   .update({ credits: freshProfile.credits - 1 })
                   .eq('id', user.id);
               
-              if (updateError) {
-                  console.error("Failed to deduct credit after success:", updateError);
-              }
+              if (updateError) console.error("Failed to deduct credit after success:", updateError);
           }
       }
 
-      console.log("AI Generation Successful");
+      console.log("Generation Successful");
 
-      // 8. RETURN RESPONSE
-      // Return the clean base64 we used (preserving client optimization)
+      // 7. RETURN RESPONSE
       const returnedImage = `data:image/jpeg;base64,${base64Data}`;
       res.json({ success: true, image: returnedImage, message: generatedText });
 
   } catch (serverError) {
-    console.error("Critical Server Error:", serverError);
+    console.error("General Server Error:", serverError);
     
-    // Check for PayloadTooLarge from Express/Node before we explicitly catch it
+    // Explicitly catch Payload Too Large (Express/Vercel)
     if (serverError.type === 'entity.too.large' || (serverError.message && serverError.message.includes('too large'))) {
-        return res.status(413).json({ error: "The image is too large. Please upload a smaller file (under 4MB)." });
+        return res.status(413).json({ error: "The image is too large. Please upload a file smaller than 4.5MB." });
     }
 
     res.status(500).json({ 
-        error: serverError.message || "An unexpected system error occurred." 
+        error: serverError.message || "An unexpected internal server error occurred." 
     });
   }
 });
@@ -200,7 +203,6 @@ app.post('/api/verify-checkout', async (req, res) => {
         let creditsToAdd = 0;
         const amountTotal = session.amount_total; 
         
-        // Pricing Logic
         if (amountTotal === 399) creditsToAdd = 5;       
         else if (amountTotal === 999) creditsToAdd = 25; 
         else if (amountTotal === 1999) creditsToAdd = 50;

@@ -19,7 +19,6 @@ export const GeminiService = {
       };
 
       // Only attach token if logged in
-      // SAFARI FIX: Ensure token is trimmed to prevent "The string did not match the expected pattern" in Headers
       if (session?.access_token) {
         headers['Authorization'] = `Bearer ${session.access_token.trim()}`;
       }
@@ -34,44 +33,43 @@ export const GeminiService = {
         })
       });
 
-      // 3. Handle Vercel Platform Errors (413, 504, 500) that return HTML
-      if (response.status === 413) {
-          throw new Error("Image is too large for the server. Please check the compression settings.");
-      }
-      if (response.status === 504) {
-          throw new Error("The AI server timed out. Please try again with a simpler prompt.");
-      }
-
-      // SAFARI FIX: Check Content-Type before parsing JSON. 
-      // Vercel may return HTML (413/500) which causes JSON.parse to throw "The string did not match the expected pattern" in Safari.
+      // 3. Robust Response Handling
+      // We attempt to parse JSON regardless of status code to get the error message
+      let data: any = null;
       const contentType = response.headers.get('content-type');
       
       if (contentType && contentType.includes('application/json')) {
-          const data = await response.json();
-          
-          if (!response.ok) {
-              throw new Error(data.error || `Server Error: ${response.status}`);
-          }
-
-          if (data.success && data.image) {
-              return data.image;
-          } else {
-              throw new Error("Server returned success but no image data.");
-          }
+        try {
+            data = await response.json();
+        } catch (e) {
+            console.warn("Failed to parse JSON error response", e);
+        }
       } else {
-          // Handle non-JSON response (e.g. HTML 500/413 error page)
-          const text = await response.text();
-          console.error("Non-JSON Response:", text); // Log for debugging
-          
-          if (response.status === 500) {
-              throw new Error("Internal Server Error. The AI service might be down.");
-          }
-          
-          throw new Error(`Server returned unexpected format (${response.status}). The image might be too large.`);
+        // Handle HTML responses (often Vercel 500/504 pages)
+        const text = await response.text();
+        console.error("Non-JSON response from server:", text);
+        
+        if (response.status === 413) throw new Error("Image too large (Server Limit).");
+        if (response.status === 504) throw new Error("Server timeout. Try a smaller image.");
+        if (response.status === 500) throw new Error("Internal Server Error (Infrastructure).");
+        throw new Error(`Server returned unexpected format: ${response.status}`);
+      }
+
+      if (!response.ok) {
+        // Throw the specific error message from the server if available
+        const errorMessage = data?.error || `Request failed with status ${response.status}`;
+        throw new Error(errorMessage);
+      }
+
+      if (data && data.success && data.image) {
+          return data.image;
+      } else {
+          throw new Error("Server returned success but missing image data.");
       }
 
     } catch (error: any) {
       console.error("Gemini Service Error:", error);
+      // Ensure the error message is clean for the UI
       throw new Error(error.message || "Failed to connect to image generation server.");
     }
   }
