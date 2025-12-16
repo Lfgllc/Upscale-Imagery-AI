@@ -17,7 +17,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2023-10-16',
 });
 
-// Middleware: Set limit to 4.5MB to match Vercel's hard limit, preventing cryptic 413s from infrastructure
+// Middleware: Set limit to 4.5MB to match Vercel's hard limit
 app.use(express.json({ limit: '4.5mb' }));
 app.use(cors());
 
@@ -39,131 +39,152 @@ app.get('/api/health', (req, res) => {
 });
 
 app.post('/api/generate', async (req, res) => {
-  const { imageBase64, prompt } = req.body;
-  
-  if (!imageBase64) {
-    return res.status(400).json({ error: "No image provided" });
-  }
-
-  // 1. Authenticate User
-  const user = await getAuthenticatedUser(req);
-  
-  // Resolve API Key
-  const API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-
-  if (!API_KEY) {
-      console.error("ERR: API Key not found.");
-      return res.status(500).json({ error: "Server Configuration Error: API Key missing." });
-  }
-
   try {
-    // 2. CHECK CREDITS (Strict Check Before Generation)
-    if (user) {
-        const { data: profile } = await supabaseAdmin
-            .from('profiles')
-            .select('credits')
-            .eq('id', user.id)
-            .single();
+      const { imageBase64, prompt } = req.body;
+      
+      // 1. VALIDATION: Basic Payload
+      if (!imageBase64) {
+        return res.status(400).json({ error: "No image provided." });
+      }
+      if (!prompt) {
+        return res.status(400).json({ error: "No prompt provided." });
+      }
 
-        if (!profile) {
-            return res.status(404).json({ error: "User profile not found." });
-        }
+      // 2. VALIDATION: API Key
+      const API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+      if (!API_KEY) {
+          console.error("CRITICAL: API Key is missing from server environment.");
+          return res.status(500).json({ error: "Service configuration error. Please contact support." });
+      }
 
-        if (profile.credits < 1) {
-            return res.status(403).json({ error: "Insufficient credits. Please purchase a pack to generate images." });
-        }
-    }
+      // 3. AUTHENTICATION (Keep existing logic)
+      const user = await getAuthenticatedUser(req);
+      
+      // 4. CHECK CREDITS
+      if (user) {
+          const { data: profile } = await supabaseAdmin
+              .from('profiles')
+              .select('credits')
+              .eq('id', user.id)
+              .single();
 
-    // 3. SANITIZATION (No heavy processing)
-    // We trust the client has resized this to < 4MB. 
-    // If it's larger, Vercel/Express would have already rejected it.
-    let cleanBase64 = imageBase64;
-    if (imageBase64.includes('base64,')) {
-        cleanBase64 = imageBase64.split('base64,')[1];
-    }
+          if (!profile) {
+              return res.status(404).json({ error: "User profile not found." });
+          }
 
-    // 4. EXECUTE GEMINI GENERATION
-    try {
-        const ai = new GoogleGenAI({ apiKey: API_KEY });
-        
-        // Using 'gemini-2.5-flash' for efficiency
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: {
-                parts: [
-                    { 
-                        text: `Act as a professional photo editor. The user wants to edit the attached image. 
-                               Instruction: ${prompt}. 
-                               Describe the visual changes you would make in high detail, as if you were describing the final edited image.
-                               Ensure the output describes a complete, high-quality image.` 
-                    },
-                    {
-                        inlineData: {
-                            data: cleanBase64,
-                            mimeType: "image/jpeg",
-                        }
-                    }
-                ]
-            }
-        });
+          if (profile.credits < 1) {
+              return res.status(403).json({ error: "Insufficient credits. Please upgrade or buy a pack." });
+          }
+      }
 
-        // Extract text from the SDK response
-        const generatedText = response.text; 
+      // 5. SANITIZE & VALIDATE IMAGE DATA
+      // Remove data URI prefix if present
+      const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+      
+      // Basic check for empty or corrupted strings
+      if (!base64Data || base64Data.length < 100) {
+          return res.status(400).json({ error: "Invalid image data. The file may be corrupted." });
+      }
 
-        // 5. DEDUCT CREDITS (Only after successful execution)
-        if (user) {
-            // Fetch fresh credits to ensure concurrency safety
-            const { data: freshProfile } = await supabaseAdmin
-                .from('profiles')
-                .select('credits')
-                .eq('id', user.id)
-                .single();
+      // 6. EXECUTE GEMINI GENERATION
+      let generatedText = "";
+      
+      try {
+          const ai = new GoogleGenAI({ apiKey: API_KEY });
+          
+          const response = await ai.models.generateContent({
+              model: 'gemini-2.5-flash',
+              contents: {
+                  parts: [
+                      { 
+                          text: `Act as a professional photo editor. The user wants to edit the attached image. 
+                                 Instruction: ${prompt}. 
+                                 Describe the visual changes you would make in high detail, as if you were describing the final edited image.
+                                 Ensure the output describes a complete, high-quality image.` 
+                      },
+                      {
+                          inlineData: {
+                              data: base64Data,
+                              mimeType: "image/jpeg",
+                          }
+                      }
+                  ]
+              }
+          });
 
-            if (freshProfile && freshProfile.credits > 0) {
-                const { error: updateError } = await supabaseAdmin
-                    .from('profiles')
-                    .update({ credits: freshProfile.credits - 1 })
-                    .eq('id', user.id);
-                
-                if (updateError) {
-                    console.error("Failed to deduct credit after success:", updateError);
-                }
-            }
-        }
+          // Validation: Check if response has text
+          if (!response || !response.text) {
+              throw new Error("AI returned an empty response.");
+          }
 
-        console.log("AI Generation Successful");
+          generatedText = response.text;
 
-        // 6. RETURN RESPONSE
-        // Return the clean base64 we used (preserving client optimization)
-        const returnedImage = `data:image/jpeg;base64,${cleanBase64}`;
-        res.json({ success: true, image: returnedImage, message: generatedText });
+      } catch (geminiError) {
+          console.error("Gemini API Error Details:", JSON.stringify(geminiError, null, 2));
 
-    } catch (apiError) {
-        console.error("Gemini API Error:", apiError);
-        // Provide user-friendly error messages based on status
-        if (apiError.status === 503) {
-            throw new Error("AI service is currently busy. Please try again in a few seconds.");
-        } else if (apiError.status === 400) {
-             throw new Error("The AI rejected the request. The image might be unclear or violates safety policies.");
-        }
-        throw apiError; // Re-throw to be caught by outer catch
-    }
+          // Map Gemini specific errors to user-friendly messages
+          const msg = geminiError.message || "";
+          
+          if (msg.includes("400") || msg.includes("INVALID_ARGUMENT")) {
+               return res.status(400).json({ error: "The AI could not process this image. It may be too complex or in an unsupported format." });
+          }
+          if (msg.includes("403") || msg.includes("PERMISSION_DENIED")) {
+               return res.status(500).json({ error: "AI Service authentication failed." });
+          }
+          if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) {
+               return res.status(503).json({ error: "System is currently at capacity. Please try again in a minute." });
+          }
+          if (msg.includes("500") || msg.includes("INTERNAL")) {
+               return res.status(502).json({ error: "AI Service experienced an internal error. Please try again." });
+          }
+          if (msg.includes("503") || msg.includes("UNAVAILABLE")) {
+               return res.status(503).json({ error: "AI Service is temporarily unavailable. Please try again." });
+          }
+          if (msg.includes("SAFETY") || msg.includes("BLOCKED")) {
+               return res.status(400).json({ error: "The request was blocked by safety filters. Please modify your image or prompt." });
+          }
 
-  } catch (error) {
-    console.error("Route Error:", error);
-    // User-friendly error mapping
-    let errorMessage = "Generation Failed. Please try again.";
+          throw geminiError; // Re-throw unhandled errors to the outer catch
+      }
+
+      // 7. DEDUCT CREDITS (Only after successful execution)
+      if (user) {
+          const { data: freshProfile } = await supabaseAdmin
+              .from('profiles')
+              .select('credits')
+              .eq('id', user.id)
+              .single();
+
+          if (freshProfile && freshProfile.credits > 0) {
+              const { error: updateError } = await supabaseAdmin
+                  .from('profiles')
+                  .update({ credits: freshProfile.credits - 1 })
+                  .eq('id', user.id);
+              
+              if (updateError) {
+                  console.error("Failed to deduct credit after success:", updateError);
+              }
+          }
+      }
+
+      console.log("AI Generation Successful");
+
+      // 8. RETURN RESPONSE
+      // Return the clean base64 we used (preserving client optimization)
+      const returnedImage = `data:image/jpeg;base64,${base64Data}`;
+      res.json({ success: true, image: returnedImage, message: generatedText });
+
+  } catch (serverError) {
+    console.error("Critical Server Error:", serverError);
     
-    // Explicit check for PayloadTooLarge from Express/Vercel
-    if (error.type === 'entity.too.large' || error.message?.includes('too large') || error.message?.includes('413')) {
-        errorMessage = "Image is too large. Please upload a file smaller than 4MB.";
+    // Check for PayloadTooLarge from Express/Node before we explicitly catch it
+    if (serverError.type === 'entity.too.large' || (serverError.message && serverError.message.includes('too large'))) {
+        return res.status(413).json({ error: "The image is too large. Please upload a smaller file (under 4MB)." });
     }
-    else if (error.message?.includes('Safety')) errorMessage = "Request blocked by safety filters.";
-    else if (error.message?.includes('busy')) errorMessage = "AI Service is temporarily busy. Please try again.";
-    else if (error.message) errorMessage = error.message;
 
-    // DO NOT deduct credits here. 
-    res.status(500).json({ error: errorMessage });
+    res.status(500).json({ 
+        error: serverError.message || "An unexpected system error occurred." 
+    });
   }
 });
 
