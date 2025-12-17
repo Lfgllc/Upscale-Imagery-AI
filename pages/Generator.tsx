@@ -1,5 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+// @ts-ignore
+import heic2any from 'heic2any';
 import { StorageService } from '../services/storageService';
 import { GeminiService } from '../services/geminiService';
 import { User, ImageRecord, PlanTier, PLANS } from '../types';
@@ -23,19 +25,41 @@ export const Generator: React.FC = () => {
 
   // --- CLIENT-SIDE IMAGE PROCESSING ---
   const processImage = async (file: File): Promise<string> => {
-    // 1. Skip HEIC conversion, rely on browser support for JPG/PNG/WEBP
+    let processingFile = file;
+
+    // 1. HEIC/HEIF Conversion
+    const isHeic = file.type === 'image/heic' || 
+                   file.type === 'image/heif' || 
+                   file.name.toLowerCase().endsWith('.heic') || 
+                   file.name.toLowerCase().endsWith('.heif');
+
+    if (isHeic) {
+      try {
+        console.log("Detected HEIC image. Converting to JPEG...");
+        const converted = await heic2any({
+          blob: file,
+          toType: 'image/jpeg',
+          quality: 0.8
+        });
+
+        const blob = Array.isArray(converted) ? converted[0] : converted;
+        processingFile = new File([blob], file.name.replace(/\.(heic|heif)$/i, '.jpg'), { type: 'image/jpeg' });
+      } catch (e: any) {
+        console.error("HEIC conversion failed:", e);
+        throw new Error("Could not convert HEIC image. Please use a standard JPG or PNG.");
+      }
+    }
+
+    // 2. Browser Image Processing (Resizing & Compression)
     return new Promise((resolve, reject) => {
-      // 2. Read the file
       const reader = new FileReader();
-      reader.readAsDataURL(file);
+      reader.readAsDataURL(processingFile);
       
       reader.onload = (event) => {
         const img = new Image();
         img.src = event.target?.result as string;
         
         img.onload = () => {
-          // 3. Calculate new dimensions (Max 800x800 for safety)
-          // Aggressive resizing ensures we stay well under Vercel's 4.5MB limit
           const MAX_WIDTH = 800;
           const MAX_HEIGHT = 800;
           let width = img.width;
@@ -53,7 +77,6 @@ export const Generator: React.FC = () => {
             }
           }
 
-          // 4. Create Canvas and Draw
           const canvas = document.createElement('canvas');
           canvas.width = width;
           canvas.height = height;
@@ -64,19 +87,15 @@ export const Generator: React.FC = () => {
             return;
           }
           
-          // Fill white background to handle transparency (PNG -> JPEG conversion)
           ctx.fillStyle = "#FFFFFF";
           ctx.fillRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
           
-          // 5. Export compressed JPEG (0.7 quality)
           const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
           resolve(dataUrl);
         };
-        
         img.onerror = () => reject(new Error("Failed to load image structure."));
       };
-      
       reader.onerror = () => reject(new Error("Failed to read file."));
     });
   };
@@ -84,24 +103,19 @@ export const Generator: React.FC = () => {
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      // Reset State
       setError(null);
       setPreviewUrl(null);
-      setGeneratedImage(null); // Clear previous result
-      setCurrentImageId(null); // Clear previous ID
+      setGeneratedImage(null);
+      setCurrentImageId(null);
       setSelectedFile(file);
       setIsProcessing(true);
 
       try {
-        // Run Client-Side Resizing
         console.log(`Original file size: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
         const optimizedBase64 = await processImage(file);
-        
-        // Debug: Log approximate new size
         const approximateSizeMB = (optimizedBase64.length * 3) / 4 / 1024 / 1024;
         console.log(`Optimized size: ${approximateSizeMB.toFixed(2)} MB`);
         
-        // Safety Check: If for some reason it's still huge (unlikely with 800px), warn user
         if (approximateSizeMB > 4.0) {
             throw new Error("Image could not be compressed enough. Please use a smaller file.");
         }
@@ -122,7 +136,6 @@ export const Generator: React.FC = () => {
       return;
     }
 
-    // --- CHECK: Free vs Paid ---
     let isFreePreview = false;
 
     if (!user.isAuthenticated) {
@@ -143,15 +156,19 @@ export const Generator: React.FC = () => {
       setGeneratedImage(resultBase64);
       StorageService.logEvent({ type: 'GENERATION_SUCCESS', timestamp: Date.now() });
       
-      // 2. SYNC STATE (Only if logged in)
       if (user.isAuthenticated) {
         const updatedUser = await StorageService.syncUser();
         setUser(updatedUser);
       }
 
+      // 2. GENERATE ROBUST ID IMMEDIATELY
+      // This ensures we have a valid ID for the payment link even if DB save is pending
+      const newImageId = StorageService.generateId();
+      setCurrentImageId(newImageId);
+
       // 3. SAVE IMAGE RECORD
       const tempRecord: ImageRecord = {
-        id: Date.now().toString(),
+        id: newImageId,
         userId: user.isAuthenticated ? user.id : 'guest',
         originalImageBase64: previewUrl,
         generatedImageBase64: resultBase64,
@@ -161,9 +178,12 @@ export const Generator: React.FC = () => {
         isFreePreview: isFreePreview
       };
 
-      const savedRecord = await StorageService.saveImage(tempRecord);
-      // Ensure we set the ID from the saved record (which might be a DB UUID)
-      setCurrentImageId(savedRecord.id);
+      // We don't await this to block UI, but we need to ensure ID consistency.
+      // Since generateId() creates a UUID, saveImage will respect it.
+      StorageService.saveImage(tempRecord).catch(err => {
+         console.error("Failed to save image record:", err);
+         // Even if save fails, we have the ID in state for the current session
+      });
 
       if (isFreePreview) {
           const u = StorageService.recordFreeUsage();
@@ -187,7 +207,7 @@ export const Generator: React.FC = () => {
         return;
     }
     
-    // Safety check: Ensure we have an image ID to unlock
+    // Safety Check: ID must exist. Button should be disabled otherwise.
     if (!currentImageId) {
         console.error("No currentImageId found");
         setError("Error: Image ID missing. Please regenerate the image.");
@@ -204,11 +224,19 @@ export const Generator: React.FC = () => {
 
     setIsRedirecting(true);
 
-    // Set pending transaction so we can unlock it after Stripe redirect
+    // Set pending transaction locally (Primary Method)
     StorageService.setPendingTransaction(PlanTier.NONE, currentImageId);
     
-    // Redirect
-    window.location.href = plan.paymentLink;
+    // Redirect to Stripe with IDs (Backup Method for Tracking)
+    const separator = plan.paymentLink.includes('?') ? '&' : '?';
+    const params = new URLSearchParams();
+    params.append('prefilled_email', user.email);
+    // CRITICAL: Pass image ID to Stripe Session via client_reference_id
+    params.append('client_reference_id', currentImageId);
+
+    const finalLink = `${plan.paymentLink}${separator}${params.toString()}`;
+    
+    window.location.href = finalLink;
   };
 
   const getCurrentRecord = () => {
@@ -218,10 +246,7 @@ export const Generator: React.FC = () => {
   };
 
   const currentRecord = getCurrentRecord();
-  // If we just generated it, it might not be in the storage cache read yet if we didn't force a re-read,
-  // but saveImage updates localStorage so getImages() should find it.
-  // Fallback: use local state if not found in storage yet (improves responsiveness)
-  const isUnlocked = currentRecord ? currentRecord.isUnlocked : (!user.isAuthenticated ? false : false);
+  const isUnlocked = currentRecord ? currentRecord.isUnlocked : false;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
@@ -252,7 +277,7 @@ export const Generator: React.FC = () => {
                 type="file" 
                 ref={fileInputRef} 
                 className="hidden" 
-                accept="image/jpeg, image/png, image/webp" 
+                accept="image/jpeg, image/png, image/webp, image/heic, image/heif, .heic, .heif" 
                 onChange={handleFileChange}
               />
               
@@ -265,14 +290,14 @@ export const Generator: React.FC = () => {
                     <p className="text-sm text-slate-500">Optimizing image...</p>
                 </div>
               ) : previewUrl ? (
-                <img src={previewUrl} alt="Preview" className="max-h-64 mx-auto rounded shadow-sm" />
+                <img src={previewUrl} alt="Preview" className="max-h-64 max-w-full mx-auto rounded shadow-sm" />
               ) : (
                 <div className="space-y-2">
                   <svg className="mx-auto h-12 w-12 text-slate-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
                     <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                   <p className="text-sm text-slate-600">Click to upload or drag and drop</p>
-                  <p className="text-xs text-slate-500">JPG, PNG (Auto-optimized)</p>
+                  <p className="text-xs text-slate-500">JPG, PNG, HEIC (Auto-optimized)</p>
                 </div>
               )}
             </div>
@@ -324,7 +349,7 @@ export const Generator: React.FC = () => {
         </div>
 
         {/* Output Column */}
-        <div className="bg-slate-100 rounded-lg border border-slate-200 p-6 flex items-center justify-center min-h-[500px]">
+        <div className="bg-slate-100 rounded-lg border border-slate-200 p-6 flex items-center justify-center min-h-[300px] md:min-h-[500px]">
           {!generatedImage ? (
             <div className="text-center text-slate-400">
               <p className="text-lg font-medium">Result will appear here</p>
@@ -340,6 +365,8 @@ export const Generator: React.FC = () => {
                  <img 
                    src={generatedImage} 
                    alt="Result" 
+                   loading="eager"
+                   decoding="async"
                    draggable={isUnlocked}
                    className={`w-full h-auto ${!isUnlocked ? 'pointer-events-none' : ''}`}
                  />
@@ -368,7 +395,7 @@ export const Generator: React.FC = () => {
                 ) : (
                     <button 
                       onClick={!user.isAuthenticated ? () => navigate('/signup') : () => setShowPaymentModal(true)}
-                      disabled={isGenerating || !currentImageId} // Disable if still generating ID
+                      disabled={isGenerating || !currentImageId}
                       className={`bg-navy-800 text-white px-4 py-2 rounded text-sm font-medium transition-colors ${isGenerating || !currentImageId ? 'opacity-50 cursor-wait' : 'hover:bg-navy-900'}`}
                     >
                       {!user.isAuthenticated ? 'Sign Up to Unlock' : (isGenerating ? 'Saving...' : 'Unlock ($3.99)')}
@@ -422,8 +449,8 @@ export const Generator: React.FC = () => {
                 <button 
                     type="button"
                     onClick={handleUnlockRedirect}
-                    disabled={isRedirecting}
-                    className={`w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-navy-800 text-base font-medium text-white hover:bg-navy-900 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm ${isRedirecting ? 'opacity-75 cursor-wait' : ''}`}
+                    disabled={isRedirecting || !currentImageId}
+                    className={`w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-navy-800 text-base font-medium text-white hover:bg-navy-900 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm ${(isRedirecting || !currentImageId) ? 'opacity-75 cursor-not-allowed' : ''}`}
                 >
                   {isRedirecting ? 'Redirecting...' : 'Pay & Unlock'}
                 </button>

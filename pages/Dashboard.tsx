@@ -12,6 +12,7 @@ export const Dashboard: React.FC = () => {
   // Subscription Payment State
   const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<PlanTier | null>(null);
+  const [isRedirecting, setIsRedirecting] = useState(false);
 
   useEffect(() => {
     // Check if user is authenticated locally first
@@ -65,8 +66,18 @@ export const Dashboard: React.FC = () => {
     const plan = PLANS.find(p => p.id === selectedPlan);
     if (!plan || !plan.paymentLink) return;
     
+    setIsRedirecting(true);
     StorageService.setPendingTransaction(selectedPlan);
-    window.location.href = plan.paymentLink;
+
+    // Redirect to Stripe with prefilled email and client tracking
+    const separator = plan.paymentLink.includes('?') ? '&' : '?';
+    const params = new URLSearchParams();
+    params.append('prefilled_email', user.email);
+    params.append('client_reference_id', user.id); // Track which user is subscribing
+
+    const finalLink = `${plan.paymentLink}${separator}${params.toString()}`;
+    
+    window.location.href = finalLink;
   };
 
   const currentPlanDetails = PLANS.find(p => p.id === user.plan);
@@ -158,16 +169,21 @@ export const Dashboard: React.FC = () => {
               <button 
                 onClick={() => handleDelete(img.id)}
                 className="absolute top-2 right-2 z-40 bg-white p-1 rounded-full text-slate-400 hover:text-red-600 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
+                aria-label="Delete image"
               >
                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                  </svg>
               </button>
-              <div className="aspect-w-1 aspect-h-1 w-full bg-slate-100 relative">
+              
+              {/* Image Container with Aspect Ratio Optimization */}
+              <div className="aspect-square w-full bg-slate-100 relative overflow-hidden">
                 <img 
                   src={img.generatedImageBase64 || img.originalImageBase64} 
-                  alt={img.prompt} 
-                  className={`object-cover w-full h-64 ${!img.isUnlocked ? 'blur-[2px]' : ''}`}
+                  alt={img.prompt || "Generated Image"} 
+                  loading="lazy"
+                  decoding="async"
+                  className={`absolute inset-0 w-full h-full object-cover transition-all duration-300 ${!img.isUnlocked ? 'blur-[2px]' : ''}`}
                 />
                 {!img.isUnlocked && (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/10 watermarked-grid watermarked select-none z-20">
@@ -175,9 +191,10 @@ export const Dashboard: React.FC = () => {
                   </div>
                 )}
               </div>
+              
               <div className="p-4">
                 <p className="text-xs text-slate-500 mb-1">{new Date(img.timestamp).toLocaleDateString()}</p>
-                <p className="text-sm font-medium text-navy-900 line-clamp-2">{img.prompt}</p>
+                <p className="text-sm font-medium text-navy-900 line-clamp-2" title={img.prompt}>{img.prompt}</p>
                 <div className="mt-4 flex justify-between items-center">
                   {img.isUnlocked ? (
                      <a 
@@ -201,7 +218,7 @@ export const Dashboard: React.FC = () => {
       {showSubscriptionModal && selectedPlan && (
         <div className="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
           <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onClick={() => setShowSubscriptionModal(false)}></div>
+            <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onClick={() => !isRedirecting && setShowSubscriptionModal(false)}></div>
             <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
               <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                   <h3 className="text-lg font-bold">Secure Checkout</h3>
@@ -210,12 +227,14 @@ export const Dashboard: React.FC = () => {
               <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
                 <button 
                     onClick={handleProceedToStripe}
-                    className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-camel-600 text-base font-medium text-white hover:bg-camel-700 sm:ml-3 sm:w-auto sm:text-sm"
+                    disabled={isRedirecting}
+                    className={`w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-camel-600 text-base font-medium text-white hover:bg-camel-700 sm:ml-3 sm:w-auto sm:text-sm ${isRedirecting ? 'opacity-75 cursor-wait' : ''}`}
                 >
-                  Proceed
+                  {isRedirecting ? 'Redirecting...' : 'Proceed'}
                 </button>
                 <button 
                     onClick={() => setShowSubscriptionModal(false)}
+                    disabled={isRedirecting}
                     className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
                 >
                   Cancel

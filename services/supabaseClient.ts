@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 // --- CONFIGURATION ---
+
 // Helper to clean environment variables (removes whitespace and accidental quotes)
 const cleanEnvVar = (value: string | undefined): string => {
   if (!value) return '';
@@ -13,11 +14,27 @@ const cleanEnvVar = (value: string | undefined): string => {
   return cleaned;
 };
 
-// Retrieve and clean variables
-// Safely access import.meta.env to prevent "undefined is not an object" error
-const env = (import.meta.env || {}) as any;
-let SUPABASE_URL = cleanEnvVar(env.VITE_SUPABASE_URL);
-const SUPABASE_ANON_KEY = cleanEnvVar(env.VITE_SUPABASE_ANON_KEY); 
+// Helper to safely access env vars in Vite or standard process.env environments
+const getEnvVar = (key: string): string => {
+  // 1. Try import.meta.env (Vite standard)
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
+    return cleanEnvVar(import.meta.env[key]);
+  }
+  // 2. Try process.env (Fallback for some build tools or legacy setups)
+  try {
+    // @ts-ignore - process might not be defined in all environments
+    if (typeof process !== 'undefined' && process.env && process.env[key]) {
+      // @ts-ignore
+      return cleanEnvVar(process.env[key]);
+    }
+  } catch (e) {
+    // Ignore error if process is not defined
+  }
+  return '';
+};
+
+let SUPABASE_URL = getEnvVar('VITE_SUPABASE_URL');
+const SUPABASE_ANON_KEY = getEnvVar('VITE_SUPABASE_ANON_KEY'); 
 
 // Ensure Protocol
 if (SUPABASE_URL && !SUPABASE_URL.startsWith('http')) {
@@ -31,12 +48,14 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
         key: !!SUPABASE_ANON_KEY
     });
 } else {
-    // Log safe details to console to confirm what is being used
-    console.log("Supabase Client Initializing:", {
-        url: SUPABASE_URL,
-        keyStart: SUPABASE_ANON_KEY.substring(0, 5) + '...',
-        keyLength: SUPABASE_ANON_KEY.length
-    });
+    // Log safe details to console to confirm what is being used (only in dev usually, but useful for debugging this issue)
+    const isDev = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.DEV : false;
+    if (isDev) {
+        console.log("Supabase Client Initialized:", {
+            url: SUPABASE_URL,
+            keyLength: SUPABASE_ANON_KEY ? SUPABASE_ANON_KEY.length : 0
+        });
+    }
 }
 
 // Initialize Supabase Client

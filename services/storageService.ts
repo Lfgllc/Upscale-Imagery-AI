@@ -38,6 +38,17 @@ const mapProfileToUser = (profile: any, email?: string): User => ({
 });
 
 export const StorageService = {
+  // --- UTILS ---
+  generateId: (): string => {
+    // CRITICAL: Must be > 20 chars to ensure saveImage uses this ID instead of generating a new DB UUID.
+    // This prevents ID mismatch race conditions during payment flows.
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      return crypto.randomUUID(); // 36 chars
+    }
+    // Fallback: timestamp (approx 13) + random (approx 13) + random (approx 13)
+    return Date.now().toString(36) + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+  },
+
   // --- SYNCHRONOUS READS (From Cache) ---
   getUser: (): User => {
     const stored = localStorage.getItem(USER_KEY);
@@ -130,6 +141,9 @@ export const StorageService = {
     if (user.isAuthenticated) {
         const { data, error } = await supabase.from('images').insert({
             user_id: user.id,
+            // If the image already has a UUID format ID (or robust long ID), try to preserve it.
+            // This ensures the ID in local state matches what ends up in the DB.
+            ...(image.id.length > 20 ? { id: image.id } : {}),
             original_image_base64: image.originalImageBase64,
             generated_image_base64: image.generatedImageBase64,
             prompt: image.prompt,
@@ -175,7 +189,7 @@ export const StorageService = {
 
     // 2. DB Update
     // Only attempt DB update if we are logged in and it looks like a valid UUID (length > 20)
-    // Supabase IDs are 36 chars. Timestamp IDs are ~13 chars.
+    // Supabase IDs are 36 chars.
     const user = StorageService.getUser();
     if (user.isAuthenticated && imageId.length > 20) {
         const dbUpdates: any = {};
@@ -225,17 +239,8 @@ export const StorageService = {
   saveUser: (user: User) => localStorage.setItem(USER_KEY, JSON.stringify(user)),
   getAllUsers: () => [] as User[], 
   updateGlobalUserList: () => {},
-
-  // Stubbed for Admin Dashboard - In real production these should call secure backend endpoints
-  toggleUserStatus: (userId: string, isActive: boolean) => {
-      console.log(`[Storage] Toggling status for ${userId} to ${isActive}`);
-  },
-
-  // Stubbed for Admin Dashboard - In real production these should call secure backend endpoints
-  adjustUserCredits: (userId: string, credits: number) => {
-      console.log(`[Storage] Adjusting credits for ${userId} to ${credits}`);
-  },
-
+  toggleUserStatus: (userId: string, isActive: boolean) => { console.log(`[Storage] Toggling status for ${userId} to ${isActive}`); },
+  adjustUserCredits: (userId: string, credits: number) => { console.log(`[Storage] Adjusting credits for ${userId} to ${credits}`); },
   verifyEmail: () => StorageService.getUser(), 
   resendVerification: async () => {}, 
   processPayment: async () => ({ id: '1', date: Date.now(), amount: 0, description: '', status: 'SUCCESS', paymentMethod: '' }),
@@ -248,47 +253,12 @@ export const StorageService = {
       return updated;
   },
 
-  logEvent: (event: any) => {
-      console.log('Event Logged:', event);
-  },
-
+  logEvent: (event: any) => { console.log('Event Logged:', event); },
   getAnalytics: () => [],
-  
-  createTicket: (ticket: Partial<SupportTicket>) => ({ 
-      id: '1', 
-      timestamp: Date.now(), 
-      status: 'NEW', 
-      adminReplies: [], 
-      message: '', 
-      email: '', 
-      firstName: '', 
-      lastName: '', 
-      userId: '', 
-      tier: 'GUEST',
-      ...ticket 
-  } as SupportTicket),
-
+  createTicket: (ticket: Partial<SupportTicket>) => ({ id: '1', timestamp: Date.now(), status: 'NEW', adminReplies: [], message: '', email: '', firstName: '', lastName: '', userId: '', tier: 'GUEST', ...ticket } as SupportTicket),
   getTickets: () => [] as SupportTicket[],
-
-  updateTicket: (ticketId: string, updates: Partial<SupportTicket>) => {
-      console.log(`Updated ticket ${ticketId}`, updates);
-  },
-
+  updateTicket: (ticketId: string, updates: Partial<SupportTicket>) => { console.log(`Updated ticket ${ticketId}`, updates); },
   getPayouts: () => [] as Payout[],
-
-  processPayout: (amount: number, method: string, destination: string) => ({ 
-      id: '1', 
-      date: Date.now(), 
-      amount, 
-      method: method as any, 
-      destination, 
-      status: 'PROCESSED' as const 
-  }),
-
-  getMetrics: () => ({ 
-      totalUsers: 0, newUsersToday: 0, activeSubs: { BASIC: 0, PRO: 0, ELITE: 0 }, 
-      mrr: 0, totalRevenue: 0, oneTimeRevenue: 0, oneTimeSalesCount: 0, conversionRate: 0, 
-      totalGenerations: 0, failedGenerations: 0, freeGenerations: 0, ticketsNew: 0, 
-      totalWithdrawn: 0, availableBalance: 0 
-  })
+  processPayout: (amount: number, method: string, destination: string) => ({ id: '1', date: Date.now(), amount, method: method as any, destination, status: 'PROCESSED' as const }),
+  getMetrics: () => ({ totalUsers: 0, newUsersToday: 0, activeSubs: { BASIC: 0, PRO: 0, ELITE: 0 }, mrr: 0, totalRevenue: 0, oneTimeRevenue: 0, oneTimeSalesCount: 0, conversionRate: 0, totalGenerations: 0, failedGenerations: 0, freeGenerations: 0, ticketsNew: 0, totalWithdrawn: 0, availableBalance: 0 })
 };

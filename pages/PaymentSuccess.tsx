@@ -35,9 +35,22 @@ export const PaymentSuccess: React.FC = () => {
 
         if (!response.ok) throw new Error("Verification failed");
 
-        // 3. Handle specific Image Unlock if applicable
-        if (pendingTxn?.imageId) {
-            await StorageService.updateImage(pendingTxn.imageId, { isUnlocked: true });
+        const data = await response.json();
+        const clientRefId = data.clientReferenceId;
+
+        // 3. Handle specific Image Unlock
+        // Priority: Use local pending transaction ID. 
+        // Fallback: Use clientReferenceId from Stripe session (if it looks like an ID, not a user ID)
+        
+        let imageToUnlock = pendingTxn?.imageId;
+        
+        if (!imageToUnlock && clientRefId && clientRefId !== session.user.id) {
+             // If clientRefId is NOT the user ID, assume it's an image ID
+             imageToUnlock = clientRefId;
+        }
+
+        if (imageToUnlock) {
+            await StorageService.updateImage(imageToUnlock, { isUnlocked: true });
         }
 
         // 4. Sync new credits

@@ -240,8 +240,15 @@ app.post('/api/verify-checkout', async (req, res) => {
         const currentCredits = currentProfile ? currentProfile.credits : 0;
 
         await supabaseAdmin.from('profiles').update({ credits: currentCredits + creditsToAdd }).eq('id', user.id);
-        res.json({ success: true, addedCredits: creditsToAdd });
+        
+        // Return client_reference_id for frontend to handle specific item unlocking
+        res.json({ 
+            success: true, 
+            addedCredits: creditsToAdd,
+            clientReferenceId: session.client_reference_id 
+        });
     } catch (err) {
+        console.error("Verification error:", err);
         res.status(500).json({ error: "Verification failed" });
     }
 });
