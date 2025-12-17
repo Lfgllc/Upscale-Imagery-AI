@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { StorageService } from '../services/storageService';
+import { supabase } from '../services/supabaseClient';
 import { User, UserRole } from '../types';
 import { Logo } from './Logo';
 
@@ -14,13 +15,32 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [user, setUser] = React.useState<User>(StorageService.getUser());
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
 
-  // Refresh user state on location change
+  // 1. Refresh user state on navigation
   React.useEffect(() => {
     setUser(StorageService.getUser());
   }, [location]);
 
-  const handleLogout = () => {
-    StorageService.logout();
+  // 2. Global Auth Listener (Critical for Email Confirmation Flow)
+  React.useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+         // User confirmed email or logged in -> Sync local storage immediately
+         const updatedUser = await StorageService.syncUser();
+         setUser(updatedUser);
+      } else if (event === 'SIGNED_OUT') {
+         StorageService.logout();
+         setUser(StorageService.getUser());
+         navigate('/');
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [navigate]);
+
+  const handleLogout = async () => {
+    await StorageService.logout();
     setUser(StorageService.getUser());
     navigate('/');
   };
@@ -35,7 +55,6 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
           <div className="flex justify-between h-16">
             <div className="flex items-center cursor-pointer" onClick={() => navigate('/')}>
               <div className="flex-shrink-0 flex items-center gap-3">
-                {/* Logo Container: Added white bg to make blue logo visible on dark header */}
                 <div className="bg-white p-1.5 rounded-md flex items-center justify-center shadow-sm">
                     <Logo className="h-8 w-auto" />
                 </div>

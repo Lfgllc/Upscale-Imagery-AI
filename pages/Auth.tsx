@@ -53,11 +53,13 @@ export const Auth: React.FC = () => {
             navigate('/dashboard');
         } else {
             // Signup with Supabase
+            // We include emailRedirectTo to ensure they come back to this site after clicking the email link
             const { error } = await supabase.auth.signUp({
                 email,
                 password,
                 options: {
-                    data: { full_name: name }
+                    data: { full_name: name },
+                    emailRedirectTo: window.location.origin
                 }
             });
             if (error) throw error;
