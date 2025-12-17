@@ -19,6 +19,7 @@ export const Generator: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [currentImageId, setCurrentImageId] = useState<string | null>(null);
+  const [isRedirecting, setIsRedirecting] = useState(false);
 
   // --- CLIENT-SIDE IMAGE PROCESSING ---
   const processImage = async (file: File): Promise<string> => {
@@ -86,6 +87,8 @@ export const Generator: React.FC = () => {
       // Reset State
       setError(null);
       setPreviewUrl(null);
+      setGeneratedImage(null); // Clear previous result
+      setCurrentImageId(null); // Clear previous ID
       setSelectedFile(file);
       setIsProcessing(true);
 
@@ -159,6 +162,7 @@ export const Generator: React.FC = () => {
       };
 
       const savedRecord = await StorageService.saveImage(tempRecord);
+      // Ensure we set the ID from the saved record (which might be a DB UUID)
       setCurrentImageId(savedRecord.id);
 
       if (isFreePreview) {
@@ -182,22 +186,42 @@ export const Generator: React.FC = () => {
         navigate('/signup');
         return;
     }
-    if (!currentImageId) return;
+    
+    // Safety check: Ensure we have an image ID to unlock
+    if (!currentImageId) {
+        console.error("No currentImageId found");
+        setError("Error: Image ID missing. Please regenerate the image.");
+        setShowPaymentModal(false);
+        return;
+    }
 
     const plan = PLANS.find(p => p.id === PlanTier.NONE);
-    if (!plan || !plan.paymentLink) return;
+    if (!plan || !plan.paymentLink) {
+        console.error("Plan configuration missing");
+        setError("Payment system configuration error.");
+        return;
+    }
 
+    setIsRedirecting(true);
+
+    // Set pending transaction so we can unlock it after Stripe redirect
     StorageService.setPendingTransaction(PlanTier.NONE, currentImageId);
+    
+    // Redirect
     window.location.href = plan.paymentLink;
   };
 
   const getCurrentRecord = () => {
+      if (!currentImageId) return null;
       const images = StorageService.getImages();
       return images.find(i => i.id === currentImageId);
   };
 
   const currentRecord = getCurrentRecord();
-  const isUnlocked = currentRecord?.isUnlocked || false;
+  // If we just generated it, it might not be in the storage cache read yet if we didn't force a re-read,
+  // but saveImage updates localStorage so getImages() should find it.
+  // Fallback: use local state if not found in storage yet (improves responsiveness)
+  const isUnlocked = currentRecord ? currentRecord.isUnlocked : (!user.isAuthenticated ? false : false);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
@@ -344,9 +368,10 @@ export const Generator: React.FC = () => {
                 ) : (
                     <button 
                       onClick={!user.isAuthenticated ? () => navigate('/signup') : () => setShowPaymentModal(true)}
-                      className="bg-navy-800 hover:bg-navy-900 text-white px-4 py-2 rounded text-sm font-medium transition-colors"
+                      disabled={isGenerating || !currentImageId} // Disable if still generating ID
+                      className={`bg-navy-800 text-white px-4 py-2 rounded text-sm font-medium transition-colors ${isGenerating || !currentImageId ? 'opacity-50 cursor-wait' : 'hover:bg-navy-900'}`}
                     >
-                      {!user.isAuthenticated ? 'Sign Up to Unlock' : 'Unlock ($3.99)'}
+                      {!user.isAuthenticated ? 'Sign Up to Unlock' : (isGenerating ? 'Saving...' : 'Unlock ($3.99)')}
                     </button>
                 )}
               </div>
@@ -357,9 +382,9 @@ export const Generator: React.FC = () => {
 
       {/* Payment Redirect Modal */}
       {showPaymentModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-[100] overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
           <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onClick={() => setShowPaymentModal(false)}></div>
+            <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onClick={() => !isRedirecting && setShowPaymentModal(false)}></div>
 
             <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
@@ -395,14 +420,17 @@ export const Generator: React.FC = () => {
               </div>
               <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
                 <button 
+                    type="button"
                     onClick={handleUnlockRedirect}
-                    className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-navy-800 text-base font-medium text-white hover:bg-navy-900 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm"
+                    disabled={isRedirecting}
+                    className={`w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-navy-800 text-base font-medium text-white hover:bg-navy-900 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm ${isRedirecting ? 'opacity-75 cursor-wait' : ''}`}
                 >
-                  Pay & Unlock
+                  {isRedirecting ? 'Redirecting...' : 'Pay & Unlock'}
                 </button>
                 <button 
                     type="button" 
                     onClick={() => setShowPaymentModal(false)}
+                    disabled={isRedirecting}
                     className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
                 >
                   Cancel

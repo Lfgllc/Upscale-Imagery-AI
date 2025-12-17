@@ -1,23 +1,47 @@
 import { createClient } from '@supabase/supabase-js';
 
 // --- CONFIGURATION ---
-// We strictly use Vite environment variables. 
-// Hardcoded values have been removed to prevent mismatches between keys and URLs.
+// Helper to clean environment variables (removes whitespace and accidental quotes)
+const cleanEnvVar = (value: string | undefined): string => {
+  if (!value) return '';
+  let cleaned = value.trim();
+  // Remove surrounding quotes if user added them in Vercel (common mistake)
+  if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || 
+      (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+      cleaned = cleaned.slice(1, -1);
+  }
+  return cleaned;
+};
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY; 
+// Retrieve and clean variables
+// Safely access import.meta.env to prevent "undefined is not an object" error
+const env = (import.meta.env || {}) as any;
+let SUPABASE_URL = cleanEnvVar(env.VITE_SUPABASE_URL);
+const SUPABASE_ANON_KEY = cleanEnvVar(env.VITE_SUPABASE_ANON_KEY); 
 
-if (!SUPABASE_URL) {
-    console.error("CRITICAL: VITE_SUPABASE_URL is missing in environment variables.");
+// Ensure Protocol
+if (SUPABASE_URL && !SUPABASE_URL.startsWith('http')) {
+    SUPABASE_URL = `https://${SUPABASE_URL}`;
 }
 
-if (!SUPABASE_ANON_KEY) {
-    console.error("CRITICAL: VITE_SUPABASE_ANON_KEY is missing in environment variables.");
+// Validation & Debugging
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    console.warn("Supabase environment variables are missing or empty. Check .env file.", {
+        url: !!SUPABASE_URL,
+        key: !!SUPABASE_ANON_KEY
+    });
+} else {
+    // Log safe details to console to confirm what is being used
+    console.log("Supabase Client Initializing:", {
+        url: SUPABASE_URL,
+        keyStart: SUPABASE_ANON_KEY.substring(0, 5) + '...',
+        keyLength: SUPABASE_ANON_KEY.length
+    });
 }
 
 // Initialize Supabase Client
-// We trim() the key to ensure no accidental whitespace from copy-pasting causes invalid key errors.
-export const supabase = createClient(
-    SUPABASE_URL || '', 
-    (SUPABASE_ANON_KEY || '').trim()
-);
+// Use fallbacks to prevent crash if env vars are missing
+const finalUrl = SUPABASE_URL || 'https://placeholder.supabase.co';
+const finalKey = SUPABASE_ANON_KEY || 'placeholder';
+
+export const supabase = createClient(finalUrl, finalKey);

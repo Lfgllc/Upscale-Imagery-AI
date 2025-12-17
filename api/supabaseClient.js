@@ -4,9 +4,24 @@ const dotenv = require('dotenv');
 // Load environment variables if running locally
 dotenv.config();
 
+// Helper to clean environment variables
+const cleanEnvVar = (value) => {
+  if (!value) return '';
+  let cleaned = value.trim();
+  if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || 
+      (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+      cleaned = cleaned.slice(1, -1);
+  }
+  return cleaned;
+};
+
 // Backend should look for SUPABASE_URL first, then VITE_SUPABASE_URL as a backup
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+let SUPABASE_URL = cleanEnvVar(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL);
+const SUPABASE_SERVICE_KEY = cleanEnvVar(process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+if (SUPABASE_URL && !SUPABASE_URL.startsWith('http')) {
+    SUPABASE_URL = `https://${SUPABASE_URL}`;
+}
 
 if (!SUPABASE_URL) {
     console.error("BACKEND ERROR: SUPABASE_URL is missing from environment variables.");
@@ -20,10 +35,9 @@ if (!SUPABASE_SERVICE_KEY) {
 }
 
 // Initialize Supabase Admin Client
-// Use trim() to clean up any potential whitespace in the secret key
 const supabaseAdmin = createClient(
     SUPABASE_URL || '', 
-    (SUPABASE_SERVICE_KEY || '').trim()
+    SUPABASE_SERVICE_KEY || ''
 );
 
 module.exports = supabaseAdmin;
