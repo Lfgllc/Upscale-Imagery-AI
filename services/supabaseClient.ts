@@ -1,66 +1,72 @@
 import { createClient } from '@supabase/supabase-js';
 
-// --- CONFIGURATION ---
+// --- ROBUST ENVIRONMENT CONFIGURATION ---
 
-// Helper to clean environment variables (removes whitespace and accidental quotes)
-const cleanEnvVar = (value: string | undefined): string => {
-  if (!value) return '';
-  let cleaned = value.trim();
-  // Remove surrounding quotes if user added them in Vercel (common mistake)
-  if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || 
-      (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
-      cleaned = cleaned.slice(1, -1);
+// Helper to sanitize values (remove accidental quotes or whitespace)
+const clean = (str: string | undefined): string => {
+  if (!str) return '';
+  const s = str.trim();
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    return s.slice(1, -1);
   }
-  return cleaned;
+  return s;
 };
 
-// Helper to safely access env vars in Vite or standard process.env environments
-const getEnvVar = (key: string): string => {
-  // 1. Try import.meta.env (Vite standard)
-  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
-    return cleanEnvVar(import.meta.env[key]);
+// 1. Initialize variables
+let rawUrl = '';
+let rawKey = '';
+
+// 2. Attempt to read from Vite's import.meta.env
+// We wrap this in a try-catch to prevent "ReferenceError" or "undefined is not an object" 
+// in environments where import.meta is not supported or defined.
+try {
+  // @ts-ignore
+  if (typeof import.meta !== 'undefined' && import.meta.env) {
+    // Vite statically replaces these patterns at build time. 
+    // If the variable is missing, it might remain as the expression or become undefined.
+    // We assign to temporary variables to ensure the bundler picks them up.
+    const vUrl = import.meta.env.VITE_SUPABASE_URL;
+    const vKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    
+    if (vUrl) rawUrl = vUrl;
+    if (vKey) rawKey = vKey;
   }
-  // 2. Try process.env (Fallback for some build tools or legacy setups)
+} catch (e) {
+  // Safe to ignore: means we aren't in a standard ESM environment
+}
+
+// 3. Fallback to process.env (Node.js / Vercel Serverless / Non-Vite)
+if (!rawUrl || !rawKey) {
   try {
-    // @ts-ignore - process might not be defined in all environments
-    if (typeof process !== 'undefined' && process.env && process.env[key]) {
+    // @ts-ignore
+    if (typeof process !== 'undefined' && process.env) {
+      // Check both standard names and VITE_ prefixed names
       // @ts-ignore
-      return cleanEnvVar(process.env[key]);
+      rawUrl = rawUrl || process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      // @ts-ignore
+      rawKey = rawKey || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
     }
   } catch (e) {
-    // Ignore error if process is not defined
+    // Ignore
   }
-  return '';
-};
-
-let SUPABASE_URL = getEnvVar('VITE_SUPABASE_URL');
-const SUPABASE_ANON_KEY = getEnvVar('VITE_SUPABASE_ANON_KEY'); 
-
-// Ensure Protocol
-if (SUPABASE_URL && !SUPABASE_URL.startsWith('http')) {
-    SUPABASE_URL = `https://${SUPABASE_URL}`;
 }
 
-// Validation & Debugging
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    console.warn("Supabase environment variables are missing or empty. Check .env file.", {
-        url: !!SUPABASE_URL,
-        key: !!SUPABASE_ANON_KEY
-    });
-} else {
-    // Log safe details to console to confirm what is being used (only in dev usually, but useful for debugging this issue)
-    const isDev = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.DEV : false;
-    if (isDev) {
-        console.log("Supabase Client Initialized:", {
-            url: SUPABASE_URL,
-            keyLength: SUPABASE_ANON_KEY ? SUPABASE_ANON_KEY.length : 0
-        });
-    }
-}
+const SUPABASE_URL = clean(rawUrl);
+const SUPABASE_ANON_KEY = clean(rawKey);
 
-// Initialize Supabase Client
-// Use fallbacks to prevent crash if env vars are missing
-const finalUrl = SUPABASE_URL || 'https://placeholder.supabase.co';
-const finalKey = SUPABASE_ANON_KEY || 'placeholder';
+// 4. Debugging & Validation
+const isMissing = !SUPABASE_URL || !SUPABASE_ANON_KEY;
 
-export const supabase = createClient(finalUrl, finalKey);
+if (isMissing) {
+  console.warn("⚠️ Supabase Configuration Missing ⚠️");
+  console.warn("Please ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set in your .env file or Vercel Environment Variables.");
+  console.warn(`Current status -> URL: ${!!SUPABASE_URL}, Key: ${!!SUPABASE_ANON_KEY}`);
+} 
+
+// 5. Create Client
+// We use placeholders if missing to prevent the app from crashing immediately on load.
+// Auth calls will fail, but the UI will render.
+const urlToUse = SUPABASE_URL || 'https://placeholder.supabase.co';
+const keyToUse = SUPABASE_ANON_KEY || 'placeholder-key';
+
+export const supabase = createClient(urlToUse, keyToUse);
